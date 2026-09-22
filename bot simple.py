@@ -7,6 +7,7 @@
 Всё хранится в одном файле assistant.db (SQLite), создаётся автоматически.
 Бот отвечает только ТЕБЕ (по твоему Telegram user_id) — задаётся в .env.
 """
+import functools
 
 import asyncio
 import logging
@@ -66,7 +67,8 @@ def db():
 # ---------- Проверка владельца ----------
 
 def owner_only(handler):
-    async def wrapper(message: Message, *args, **kwargs):
+@functools.wraps(handler)
+async def wrapper(message: Message, *args, **kwargs):
         if message.from_user.id != OWNER_ID:
             await message.answer("Этот бот приватный 🙂")
             return
