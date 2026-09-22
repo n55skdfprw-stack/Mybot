@@ -67,8 +67,8 @@ def db():
 # ---------- Проверка владельца ----------
 
 def owner_only(handler):
-@functools.wraps(handler)
-async def wrapper(message: Message, *args, **kwargs):
+    @functools.wraps(handler)
+    async def wrapper(message: Message, *args, **kwargs):
         if message.from_user.id != OWNER_ID:
             await message.answer("Этот бот приватный 🙂")
             return
