@@ -401,7 +401,12 @@ class Alfred(ScheduleMixin):
             return self._ambiguous(r, "note", found)
         note = found[0]
         self._set_last("note", note.id)
-        if r.replace_from:
+        rewrite = re.search(r"(?:напиши|запиши|пусть будет|замени на|теперь там)\s*:\s*(.+)$", self._message or "",
+                            re.IGNORECASE | re.DOTALL)
+        if rewrite:
+            # «В заметке про ящик напиши: паспорт в нижнем ящике» — новый текст целиком.
+            updated = self.notes.set_content(note, rewrite.group(1).strip())
+        elif r.replace_from:
             updated = self.notes.replace_text(note, r.replace_from, r.replace_to or "")
             if updated is None:
                 return Reply(f"🎩 Сэр, в заметке нет слов «{r.replace_from}»! Что именно поменять?")

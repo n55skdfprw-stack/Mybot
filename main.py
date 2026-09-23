@@ -6,6 +6,7 @@ import logging
 from aiogram import Bot
 from aiogram.types import BotCommand
 
+from alfred import VERSION
 from alfred.brain.brain import Brain
 from alfred.brain.llm_client import GigaChatClient
 from alfred.config import load_config
@@ -53,7 +54,7 @@ async def main() -> None:
     scheduler = build_scheduler(bot, alfred, config.owner_id)
     scheduler.start()
 
-    log.info("Альфред запущен (версия 2.6). База: %s", config.database_path)
+    log.info("Альфред запущен (версия %s). База: %s", VERSION, config.database_path)
     await dp.start_polling(bot)
 
 

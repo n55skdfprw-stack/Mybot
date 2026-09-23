@@ -10,6 +10,7 @@ from typing import Optional
 from ..brain.dates import find_dates, parse_date, parse_repeat, parse_time_range, parse_until
 from ..brain.parser import BrainResult
 from ..database.schedule_repo import Event
+from ..services import search
 from ..services.notes import fuzzy_replace
 from ..services.schedule import ScheduleService, event_dt
 from ..services.tasks import DuplicateError
@@ -27,6 +28,7 @@ SCHEDULE_BUTTONS = [[("🗓️ Сегодня", "sched:today"), ("🗓️ Зав
 TELEGRAM_LIMIT = 3800
 
 
+VERB_RE = re.compile(r"взять|захватить|принести|оплатить|подготовить|распечатать|сдать", re.IGNORECASE)
 COMMENT_RE = re.compile(
     r"(?:,|\s)\s*(?:и\s+)?(?:не\s+забыть|надо|нужно|не\s+забудь)?\s*"
     r"((?:взять|захватить|принести|оплатить|подготовить|распечатать|сдать)\b.+)$",
@@ -188,6 +190,8 @@ class ScheduleMixin:
         etype = r.event_type or infer_type(r.target)
         on = None if (r.event_when and REPEAT_WORDS.search(r.event_when)) else parse_date(r.event_when, self.today())
         at = parse_time_range(r.time_text)[0] if r.time_text else None
+        if not at and r.intent == "DELETE_EVENT":
+            at = parse_time_range(self._message)[0]  # «Удали врача 18:30» — время есть в самом сообщении
         words = r.target if r.target and r.target != "LAST" and not infer_type(r.target) else None
         found = self.schedule.find(self.today(), words, etype, on, at)
         if not found and at:
@@ -230,6 +234,14 @@ class ScheduleMixin:
             return Reply("🎩 Сэр, я не нашёл такое событие в распорядке! Уточните, пожалуйста, какое именно?")
         if len(found) == 1:
             return found[0]
+        # Слова из сообщения совпадают с комментарием или названием ровно одного события — берём его.
+        def text(e: Event) -> str:
+            return " ".join(filter(None, [e.title, e.comment, e.discipline, e.location, e.focus]))
+        scores = [(search.score(self._message or "", text(e)), e) for e in found]
+        best = max(sc for sc, _ in scores)
+        leaders = [e for sc, e in scores if sc == best]
+        if best > 0 and len(leaders) == 1:
+            return leaders[0]
         rules = {e.recurrence_id for e in found}
         if len(rules) == 1 and None not in rules:
             return min(found, key=event_dt)  # одно повторяющееся занятие — берём ближайшее
@@ -243,6 +255,14 @@ class ScheduleMixin:
     # ------------------------------------------------------------ изменение
     def _event_changes(self, r: BrainResult, e: Event) -> dict | Reply:
         changes: dict = {}
+        negation = re.search(r"\bне\s+(нужн|надо|брать|бери|понадоб)|\bуже\s+не\b|\bбольше\s+не\b",
+                             self._message or "", re.IGNORECASE)
+        if negation and e.comment and not r.comment_remove:
+            # «К врачу паспорт уже не нужен» — убираем из комментария то, что упомянуто в сообщении.
+            words = [w for w in re.findall(r"[\wё-]+", e.comment)
+                     if search.score(w, self._message) > 0 and not VERB_RE.fullmatch(w)]
+            if words:
+                r = replace(r, comment_remove=" ".join(words), comment=None)
         new_day = parse_date(r.new_event_when, self.today())
         if new_day:
             changes["date"] = new_day.isoformat()

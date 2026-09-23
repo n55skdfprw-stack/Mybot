@@ -465,3 +465,38 @@ def test_day_view_compact(tmp_path):
         run(a.handle_text("x"))
     r = a.handle_callback("sched:tomorrow")
     assert "18:00 — Тренировка\n19:00 — Тренировка" in r.text
+
+
+def _two_doctors(a, llm):
+    llm.said(intent="CREATE_EVENT", event_type="doctor", event_when="в пятницу", time_text="в 18:30")
+    run(a.handle_text("Врач в пятницу в 18:30"))
+    llm.said(intent="CREATE_EVENT", event_type="doctor", event_when="в пятницу", time_text="в 17:00")
+    run(a.handle_text("Врач в пятницу в 17 надо взять паспорт"))
+
+
+def test_delete_by_time_in_message(tmp_path):
+    """Живая ошибка: «Удали врача 18:30» спросило «какое событие?»."""
+    a, llm, _ = make(tmp_path)
+    _two_doctors(a, llm)
+    llm.said(intent="DELETE_EVENT", target="врач", event_type="doctor")  # ИИ не выделил время
+    r = run(a.handle_text("Удали врача 18:30"))
+    assert not r.buttons and "18:30" in r.text
+    assert [e.start_time for e in a.schedule.day(date(2026, 9, 25))] == ["17:00"]
+
+
+def test_comment_words_pick_event_even_if_ai_gave_no_comment_field(tmp_path):
+    a, llm, _ = make(tmp_path)
+    _two_doctors(a, llm)
+    llm.said(intent="UPDATE_EVENT", target="врач", event_type="doctor", comment="паспорт не нужен")
+    r = run(a.handle_text("К врачу паспорт уже не нужен"))
+    assert not r.buttons  # выбрано событие, где упоминается паспорт
+    assert all(not e.comment for e in a.schedule.day(date(2026, 9, 25)))  # не дописал «паспорт не нужен»
+
+
+def test_note_rewrite_after_colon(tmp_path):
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_NOTE", content="в нижнем ящике")
+    run(a.handle_text("x"))
+    llm.said(intent="UPDATE_NOTE", target="ящик", replace_from="Паспорт", replace_to="")
+    run(a.handle_text("В заметке про ящик напиши: паспорт в нижнем ящике"))
+    assert a.notes.all()[0].content == "Паспорт в нижнем ящике"
