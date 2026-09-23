@@ -257,7 +257,9 @@ class ScheduleMixin:
         changes: dict = {}
         negation = re.search(r"\bне\s+(нужн|надо|брать|бери|понадоб)|\bуже\s+не\b|\bбольше\s+не\b",
                              self._message or "", re.IGNORECASE)
-        if negation and e.comment and not r.comment_remove:
+        given_missing = bool(r.comment_remove and e.comment
+                             and fuzzy_replace(e.comment, r.comment_remove, "") is None)
+        if negation and e.comment and (not r.comment_remove or given_missing):
             # «К врачу паспорт уже не нужен» — убираем из комментария то, что упомянуто в сообщении.
             words = [w for w in re.findall(r"[\wё-]+", e.comment)
                      if search.score(w, self._message) > 0 and not VERB_RE.fullmatch(w)]

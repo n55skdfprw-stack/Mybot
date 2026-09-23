@@ -500,3 +500,17 @@ def test_note_rewrite_after_colon(tmp_path):
     llm.said(intent="UPDATE_NOTE", target="ящик", replace_from="Паспорт", replace_to="")
     run(a.handle_text("В заметке про ящик напиши: паспорт в нижнем ящике"))
     assert a.notes.all()[0].content == "Паспорт в нижнем ящике"
+
+
+def test_negation_when_ai_passed_note_text(tmp_path):
+    """Живая ошибка 24.09, 00:24: ИИ сказал «правка заметки» с текстом из заметки про ящик."""
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_NOTE", content="Паспорт лежит в нижнем ящике")
+    run(a.handle_text("Запиши что паспорт лежит в нижнем ящике"))
+    llm.said(intent="CREATE_EVENT", event_type="doctor", event_when="в пятницу", time_text="в 17:00")
+    run(a.handle_text("Врач в пятницу в 17 надо взять паспорт"))
+    llm.said(intent="UPDATE_NOTE", target="паспорт", replace_from="лежит в нижнем ящике", replace_to="")
+    r = run(a.handle_text("К врачу паспорт уже не нужен"))
+    assert "Обновил распорядок" in r.text
+    assert not a.schedule.day(date(2026, 9, 25))[0].comment
+    assert a.notes.all()[0].content == "Паспорт лежит в нижнем ящике"
