@@ -53,7 +53,7 @@ async def main() -> None:
     scheduler = build_scheduler(bot, alfred, config.owner_id)
     scheduler.start()
 
-    log.info("Альфред запущен (версия 2.4). База: %s", config.database_path)
+    log.info("Альфред запущен (версия 2.5). База: %s", config.database_path)
     await dp.start_polling(bot)
 
 

@@ -443,3 +443,25 @@ def test_month_is_whole_month(tmp_path):
     a.schedule.create({"type": "training", "date": "2026-10-01", "start_time": "18:00"}, clock())
     month = a.handle_callback("sched:month").text
     assert "1 сентября" in month and "30 сентября" in month and "октября" not in month
+
+
+def test_comment_remove_picks_event_with_that_comment(tmp_path):
+    """Два врача в пятницу, паспорт только у одного — уточнять не нужно."""
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_EVENT", event_type="doctor", event_when="в пятницу", time_text="в 18:30")
+    run(a.handle_text("Врач в пятницу в 18:30"))
+    llm.said(intent="CREATE_EVENT", event_type="doctor", event_when="в пятницу", time_text="в 17:00")
+    run(a.handle_text("Врач в пятницу в 17 надо взять паспорт"))
+    llm.said(intent="UPDATE_EVENT", target="врач", event_type="doctor", comment_remove="паспорт")
+    r = run(a.handle_text("К врачу паспорт уже не нужен"))
+    assert not r.buttons and "Обновил" in r.text
+    assert all(not e.comment for e in a.schedule.day(date(2026, 9, 25)))
+
+
+def test_day_view_compact(tmp_path):
+    a, llm, _ = make(tmp_path)
+    for t in ("в 18:00", "в 19:00"):
+        llm.said(intent="CREATE_EVENT", event_type="training", event_when="завтра", time_text=t)
+        run(a.handle_text("x"))
+    r = a.handle_callback("sched:tomorrow")
+    assert "18:00 — Тренировка\n19:00 — Тренировка" in r.text

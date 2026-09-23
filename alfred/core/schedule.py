@@ -61,7 +61,7 @@ class ScheduleMixin:
         when = {0: "на сегодня", 1: "на завтра"}.get(delta, f"на {S.day_title(d, today).lower()}")
         if not events:
             return Reply(f"🎩 {when.capitalize()} в распорядке ничего нет, Сэр!", buttons=SCHEDULE_BUTTONS, edit=edit)
-        body = "\n\n".join(S.block(e) for e in events)
+        body = "\n".join(S.block(e) for e in events)
         return Reply(f"🎩 Ваш распорядок {when}, Сэр!\n\n{body}", buttons=SCHEDULE_BUTTONS, edit=edit)
 
     def _period_view(self, start: date, end: date, title: str, empty: str, edit: bool) -> Reply:
@@ -192,6 +192,11 @@ class ScheduleMixin:
         found = self.schedule.find(self.today(), words, etype, on, at)
         if not found and at:
             found = self.schedule.find(self.today(), words, etype, on, None)
+        if r.comment_remove and len(found) > 1:
+            # «К врачу паспорт уже не нужен» — берём то событие, где паспорт действительно есть.
+            with_it = [e for e in found if e.comment and fuzzy_replace(e.comment, r.comment_remove, "") is not None]
+            if with_it:
+                found = with_it
         weekday = self._only_weekday(r) if (r.apply_to == "series" or not on) else None
         if weekday is not None:
             found = [e for e in found if e.date.weekday() == weekday] or found
