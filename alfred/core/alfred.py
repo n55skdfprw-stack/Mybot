@@ -279,8 +279,7 @@ class Alfred:
         if not active:
             return Reply("🎩 Список дел пуст, Сэр! Можно выдохнуть!", edit=edit, toast=toast)
         lines = "\n".join(T.task_line(t, today) for t in active)
-        text = (f"🎩 Ваши дела, Сэр!\n\n{lines}\n\n"
-                "Нажмите на дело, чтобы вычеркнуть его! Новое дело можно просто написать мне!")
+        text = f"🎩 Ваши дела, Сэр!\n\n{lines}"
         rows = [[("✅ " + T.short(t.title), f"task:done:{t.id}")] for t in active[:20]]
         return Reply(text, buttons=rows, edit=edit, toast=toast)
 

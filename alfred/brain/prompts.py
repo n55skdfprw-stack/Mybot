@@ -15,7 +15,7 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 
 Поля JSON (лишние поля не добавляй, неизвестные ставь null):
 - "intent": одно из: CREATE_TASK, UPDATE_TASK, COMPLETE_TASK, DELETE_TASK, SHOW_TASKS, CREATE_NOTE, UPDATE_NOTE, DELETE_NOTE, SEARCH_NOTE, SHOW_NOTES, ANSWER, CANCEL, GREETING, THANKS, OTHER_SECTION, UNKNOWN
-- "title": название нового дела, коротко, с большой буквы, БЕЗ слов о дате (строка или null)
+- "title": название нового дела, коротко, с большой буквы, БЕЗ слов о дате, глагол в неопределённой форме: «Подготовить отчёт», «Купить хлеб», «Позвонить маме» (а не «Подготовь отчёт») (строка или null)
 - "due_when": слова пользователя о дате дела, дословно, как он их написал: «завтра», «в пятницу», «15 октября», «через 3 дня» (строка или null). Сам дату НЕ вычисляй.
 - "target": как пользователь назвал существующее дело/заметку, которое нужно найти (строка или null). Если пользователь говорит «её», «его», «это», «последнее» и имеет в виду последний объект из контекста — пиши "LAST".
 - "new_title": новое название дела (строка или null)
@@ -45,6 +45,9 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 
 Пример 1. Сообщение: «Купить корм коту завтра» →
 {"intent":"CREATE_TASK","title":"Купить корм коту","due_when":"завтра","target":null,"new_title":null,"new_due_when":null,"clear_due_date":false,"content":null,"replace_from":null,"replace_to":null,"query":null,"scope":"one","force_duplicate":false,"answer":null,"section":null}
+
+Пример 1б. Сообщение: «Подготовь отчёт» →
+{"intent":"CREATE_TASK","title":"Подготовить отчёт","scope":"one"}
 
 Пример 2. Сообщение: «Запиши, что паспорт лежит в верхнем ящике» →
 {"intent":"CREATE_NOTE","content":"Паспорт лежит в верхнем ящике","scope":"one"}
