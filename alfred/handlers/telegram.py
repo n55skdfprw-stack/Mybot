@@ -49,7 +49,7 @@ def build_router(alfred: Alfred, owner_id: int) -> Router:
 
     @router.callback_query()
     async def on_callback(callback: CallbackQuery, bot: Bot):
-        reply = alfred.handle_callback(callback.data or "")
+        reply = await alfred.handle_callback_async(callback.data or "")
         await callback.answer(reply.toast or None)
         msg = callback.message
         try:

@@ -8,7 +8,7 @@ from typing import Iterator
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -107,6 +107,47 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 CREATE INDEX IF NOT EXISTS idx_notif_pending ON notifications(user_id, sent, cancelled, scheduled_at);
 
+CREATE TABLE IF NOT EXISTS financial_operations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    type TEXT NOT NULL,              -- expense | income
+    amount REAL NOT NULL,            -- в рублях
+    category TEXT,
+    description TEXT,
+    original_amount REAL,            -- если была валюта: 50
+    original_currency TEXT,          -- «EUR»
+    date TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fin_user_date ON financial_operations(user_id, date);
+
+CREATE TABLE IF NOT EXISTS people (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    first_name TEXT NOT NULL,
+    last_name TEXT,
+    phone TEXT,
+    address TEXT,
+    job TEXT,
+    interests TEXT,
+    preferences TEXT,
+    likes_dislikes TEXT,
+    important_facts TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS debts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    person_id INTEGER NOT NULL REFERENCES people(id),
+    direction TEXT NOT NULL,         -- owes_me | i_owe
+    amount REAL NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 """
 
@@ -135,7 +176,8 @@ class Database:
     def wipe_user_data(self, user_id: int) -> None:
         """Полная очистка данных пользователя (сам пользователь остаётся). Одна транзакция."""
         with self.connect() as conn:
-            for table in ("notifications", "events", "recurrences", "tasks", "notes", "conversation_context"):
+            for table in ("notifications", "events", "recurrences", "tasks", "notes", "conversation_context",
+                          "debts", "financial_operations", "people"):
                 conn.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
 
     def migrate(self) -> None:

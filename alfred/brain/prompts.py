@@ -8,6 +8,9 @@ INTENTS = [
     "CREATE_TASK", "UPDATE_TASK", "COMPLETE_TASK", "RESTORE_TASK", "DELETE_TASK", "SHOW_TASKS",
     "CREATE_NOTE", "UPDATE_NOTE", "DELETE_NOTE", "SEARCH_NOTE", "SHOW_NOTES",
     "CREATE_EVENT", "UPDATE_EVENT", "DELETE_EVENT", "SHOW_SCHEDULE",
+    "CREATE_EXPENSE", "CREATE_INCOME", "UPDATE_FINANCE", "DELETE_FINANCE", "SEARCH_FINANCE",
+    "SHOW_STATISTICS", "SHOW_BALANCE", "CREATE_DEBT", "REPAY_DEBT", "DELETE_DEBT", "SHOW_DEBTS",
+    "SHOW_CURRENCY_RATES", "CONVERT_CURRENCY",
     "ANSWER", "CANCEL", "GREETING", "THANKS", "OTHER_SECTION", "UNKNOWN",
 ]
 
@@ -15,7 +18,7 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 Твоя единственная задача: разобрать сообщение пользователя и вернуть ОДИН JSON-объект. Никакого текста вокруг JSON.
 
 Поля JSON (лишние поля не добавляй, неизвестные ставь null):
-- "intent": одно из: CREATE_TASK, UPDATE_TASK, COMPLETE_TASK, RESTORE_TASK, DELETE_TASK, SHOW_TASKS, CREATE_NOTE, UPDATE_NOTE, DELETE_NOTE, SEARCH_NOTE, SHOW_NOTES, CREATE_EVENT, UPDATE_EVENT, DELETE_EVENT, SHOW_SCHEDULE, ANSWER, CANCEL, GREETING, THANKS, OTHER_SECTION, UNKNOWN
+- "intent": одно из: CREATE_TASK, UPDATE_TASK, COMPLETE_TASK, RESTORE_TASK, DELETE_TASK, SHOW_TASKS, CREATE_NOTE, UPDATE_NOTE, DELETE_NOTE, SEARCH_NOTE, SHOW_NOTES, CREATE_EVENT, UPDATE_EVENT, DELETE_EVENT, SHOW_SCHEDULE, CREATE_EXPENSE, CREATE_INCOME, UPDATE_FINANCE, DELETE_FINANCE, SEARCH_FINANCE, SHOW_STATISTICS, SHOW_BALANCE, CREATE_DEBT, REPAY_DEBT, DELETE_DEBT, SHOW_DEBTS, SHOW_CURRENCY_RATES, CONVERT_CURRENCY, ANSWER, CANCEL, GREETING, THANKS, OTHER_SECTION, UNKNOWN
 - "title": название нового дела, коротко, с большой буквы, БЕЗ слов о дате, глагол в неопределённой форме: «Подготовить отчёт», «Купить хлеб», «Позвонить маме» (а не «Подготовь отчёт») (строка или null)
 - "due_when": слова пользователя о дате дела, дословно, как он их написал: «завтра», «в пятницу», «15 октября», «через 3 дня» (строка или null). Сам дату НЕ вычисляй.
 - "target": как пользователь назвал существующее дело/заметку, которое нужно найти (строка или null). Если пользователь говорит «её», «его», «это», «последнее» и имеет в виду последний объект из контекста — пиши "LAST".
@@ -29,7 +32,23 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 - "scope": "all", если действие относится ко ВСЕМ делам/заметкам, иначе "one"
 - "force_duplicate": true, только если пользователь явно просит «ещё одно», «ещё раз добавь»
 - "answer": если Альфред задал вопрос (см. ожидание ниже) и сообщение — ответ на него, то intent = "ANSWER", а сюда — суть ответа
-- "section": для OTHER_SECTION — одно из: finance, birthdays, dossier, weather
+- "section": для OTHER_SECTION — одно из: birthdays, dossier, weather
+
+Поля для финансов (суммы и даты сам НЕ вычисляй — цитируй слова пользователя):
+- "amount_text": слова о сумме дословно: «2500», «2,5 тысячи», «120к», «50 евро» (или null)
+- "currency": валюта словами, если названа: «евро», «доллары», «юани» (или null)
+- "category": на что потрачено / откуда доход, 1–2 слова: «продукты», «такси», «зарплата» (или null)
+- "description": короткое описание, если есть подробности (или null)
+- "op_when": слова о дне операции: «вчера», «24 сентября» (или null)
+- "op_type": "expense" или "income" — для изменения, удаления и поиска (или null)
+- "new_amount_text": новая сумма при исправлении: «3000» (или null)
+- "new_category": новая категория при исправлении (или null)
+- "period_text": период дословно: «за неделю», «за месяц», «за сентябрь», «за последнее время» (или null)
+- "count": сколько последних записей затронуть: 1, 2, 3 (или null)
+- "person": имя человека в ИМЕНИТЕЛЬНОМ падеже: «Сергей», «Максим», «Сергей Афанасьев» (или null)
+- "direction": "owes_me" — человек должен пользователю; "i_owe" — пользователь должен человеку (или null)
+- "convert_to": в какую валюту перевести: «рубли», «евро» (или null)
+Для UPDATE_FINANCE / DELETE_FINANCE в "target" — слова, по которым найти операцию («такси», «продукты»), или "LAST" — последняя запись.
 
 Поля для распорядка (события с конкретным временем: лекции, тренировки, врач, встречи):
 - "event_type": lecture (лекция), practice (практика, семинар, пара), training (тренировка), doctor (врач, приём), meeting (встреча), other (всё остальное)
@@ -63,7 +82,13 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 - Отрицания: «паспорт уже не нужен в заметке» — UPDATE_NOTE с replace_from, replace_to = "".
 - Лекции, тренировки, врач, встречи, занятия с конкретным временем — это распорядок: CREATE_EVENT / UPDATE_EVENT / DELETE_EVENT. Дело без времени («купить хлеб завтра») — CREATE_TASK.
 - «Отмени тренировку», «тренировки не будет» — DELETE_EVENT. «Что у меня сегодня/завтра/на неделе», «покажи расписание» — SHOW_SCHEDULE (в event_when — «сегодня», «завтра», «на неделю» или «в этом месяце»).
-- Финансы, расходы, долги, дни рождения, досье, погода, курсы валют, время в городах — OTHER_SECTION.
+- «Потратил 2500 на продукты», «Купил кофе за 300» — CREATE_EXPENSE. «Получил зарплату», «Пришло 5000» — CREATE_INCOME.
+- «Не 5000, а 3000», «Удали последний расход», «Последний расход был на такси» — UPDATE_FINANCE / DELETE_FINANCE (target "LAST").
+- «Сколько я потратил на продукты за месяц?», «Что я покупал вчера?» — SEARCH_FINANCE. «Статистика», «Покажи финансы» — SHOW_STATISTICS.
+- «Какой у меня остаток?», «Сколько у меня денег?» — SHOW_BALANCE.
+- «Сергей должен мне 5000», «Я должен Максиму 3000», «Занял Игорю 1000» — CREATE_DEBT. «Сергей вернул 2000», «Я отдал Максиму долг» — REPAY_DEBT. «Мне должны», «Кому я должен», «Долги» — SHOW_DEBTS. Долг — это НЕ расход и НЕ доход.
+- «Курс доллара», «Курсы валют» — SHOW_CURRENCY_RATES. «Сколько 100 долларов в рублях?», «5000 рублей в евро», «100 usd» — CONVERT_CURRENCY.
+- Дни рождения, досье, погода, время в городах — OTHER_SECTION.
 - «Отмена», «не надо», «забудь» — CANCEL. Приветствие — GREETING. Благодарность — THANKS.
 - Если непонятно — UNKNOWN. Ничего не выдумывай.
 
@@ -87,6 +112,15 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 
 Пример 9. Сообщение: «Тренировки по четвергам теперь в 19» →
 {"intent":"UPDATE_EVENT","target":"тренировка","event_type":"training","event_when":"по четвергам","new_time_text":"в 19","apply_to":"series"}
+
+Пример 10. Сообщение: «Потратил 2500 на продукты» →
+{"intent":"CREATE_EXPENSE","amount_text":"2500","category":"продукты","scope":"one"}
+
+Пример 11. Сообщение: «Сергей вернул мне 2000» →
+{"intent":"REPAY_DEBT","person":"Сергей","direction":"owes_me","amount_text":"2000","scope":"one"}
+
+Пример 12. Сообщение: «Я должен Максиму 3000» →
+{"intent":"CREATE_DEBT","person":"Максим","direction":"i_owe","amount_text":"3000","scope":"one"}
 
 Пример 2. Сообщение: «Запиши, что паспорт лежит в верхнем ящике» →
 {"intent":"CREATE_NOTE","content":"Паспорт лежит в верхнем ящике","scope":"one"}

@@ -8,7 +8,7 @@ from typing import Optional
 
 from .prompts import INTENTS
 
-SECTIONS = {"finance", "birthdays", "dossier", "weather"}
+SECTIONS = {"birthdays", "dossier", "weather"}
 EVENT_TYPES = {"lecture", "practice", "training", "doctor", "meeting", "other"}
 
 
@@ -45,6 +45,19 @@ class BrainResult:
     repeat_text: Optional[str] = None
     until_text: Optional[str] = None
     apply_to: str = "one"
+    amount_text: Optional[str] = None
+    currency: Optional[str] = None
+    category: Optional[str] = None
+    description: Optional[str] = None
+    op_when: Optional[str] = None
+    op_type: Optional[str] = None
+    new_amount_text: Optional[str] = None
+    new_category: Optional[str] = None
+    period_text: Optional[str] = None
+    count: Optional[int] = None
+    person: Optional[str] = None
+    direction: Optional[str] = None
+    convert_to: Optional[str] = None
 
 
 class ParseError(Exception):
@@ -56,6 +69,14 @@ def _str(value) -> Optional[str]:
         return None
     s = str(value).strip()
     return s or None
+
+
+def _int(value) -> Optional[int]:
+    try:
+        n = int(value)
+        return n if 0 < n <= 50 else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _date(value) -> Optional[date]:
@@ -123,4 +144,17 @@ def parse(raw: str) -> BrainResult:
         repeat_text=_str(data.get("repeat_text")),
         until_text=_str(data.get("until_text")),
         apply_to="series" if data.get("apply_to") == "series" else "one",
+        amount_text=_str(data.get("amount_text")),
+        currency=_str(data.get("currency")),
+        category=_str(data.get("category")),
+        description=_str(data.get("description")),
+        op_when=_str(data.get("op_when")),
+        op_type=data.get("op_type") if data.get("op_type") in ("expense", "income") else None,
+        new_amount_text=_str(data.get("new_amount_text")),
+        new_category=_str(data.get("new_category")),
+        period_text=_str(data.get("period_text")),
+        count=_int(data.get("count")),
+        person=_str(data.get("person")),
+        direction=data.get("direction") if data.get("direction") in ("owes_me", "i_owe") else None,
+        convert_to=_str(data.get("convert_to")),
     )

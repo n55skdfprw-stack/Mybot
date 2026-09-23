@@ -1,0 +1,297 @@
+"""Тесты третьего этапа — «Ваши финансы». Сегодня — четверг, 24 сентября 2026."""
+
+import asyncio
+from datetime import date, datetime
+
+import pytest
+
+from alfred.brain.brain import Brain
+from alfred.core.alfred import Alfred
+from alfred.database.db import Database
+from alfred.database.finance_repo import DebtRepository, OperationRepository, PeopleRepository
+from alfred.database.repositories import ContextRepository, NoteRepository, TaskRepository, UserRepository
+from alfred.database.schedule_repo import EventRepository, NotificationRepository, RuleRepository
+from alfred.services.currency import CurrencyService
+from alfred.services.finance import DebtService, FinanceService
+from alfred.services.notes import NoteService
+from alfred.services.schedule import ScheduleService
+from alfred.services.tasks import TaskService
+
+from .test_alfred import TZ, FakeLLM, style_ok
+
+CBR = {"Date": "2026-09-24T11:30:00+03:00", "Valute": {
+    "USD": {"Nominal": 1, "Value": 82.45, "Previous": 82.14},
+    "EUR": {"Nominal": 1, "Value": 90.12, "Previous": 90.27},
+    "CNY": {"Nominal": 1, "Value": 11.38, "Previous": 11.36},
+    "KZT": {"Nominal": 100, "Value": 16.5, "Previous": 16.4},
+}}
+
+
+def make(tmp_path, cbr_ok=True):
+    db = Database(str(tmp_path / "f.db"))
+    db.migrate()
+    uid = UserRepository(db).ensure(1, "Europe/Moscow", "Санкт-Петербург")
+    llm = FakeLLM()
+
+    async def fetch():
+        if not cbr_ok:
+            raise ConnectionError("нет сети")
+        return CBR
+
+    a = Alfred(Brain(llm), TaskService(TaskRepository(db), uid), NoteService(NoteRepository(db), uid),
+               ScheduleService(EventRepository(db), RuleRepository(db), NotificationRepository(db), uid),
+               ContextRepository(db), uid, TZ, clock=lambda: datetime(2026, 9, 24, 12, 0, tzinfo=TZ),
+               finance=FinanceService(OperationRepository(db), uid),
+               debts=DebtService(DebtRepository(db), PeopleRepository(db), uid),
+               currency=CurrencyService(fetch=fetch))
+    return a, llm
+
+
+def run(coro):
+    return asyncio.run(coro)
+
+
+def say(a, llm, text, **ai):
+    llm.said(**ai)
+    return run(a.handle_text(text))
+
+
+# ---------------------------------------------------------------- расходы и доходы
+
+def test_expense_as_in_spec(tmp_path):
+    a, llm = make(tmp_path)
+    r = say(a, llm, "Потратил 2500 на продукты", intent="CREATE_EXPENSE", amount_text="2500", category="продукты")
+    assert r.text == "🎩 Разумеется, Сэр!\nЗаписал расход: 2 500 ₽ — продукты!"
+
+
+def test_expense_without_category_asks(tmp_path):
+    a, llm = make(tmp_path)
+    r = say(a, llm, "Потратил 700", intent="CREATE_EXPENSE", amount_text="700")
+    assert r.text == "🎩 Разумеется, Сэр! На что был расход?"
+    r = say(a, llm, "На такси", intent="ANSWER", answer="такси")
+    assert "700 ₽ — транспорт" in r.text
+
+
+def test_income_without_source_not_asked(tmp_path):
+    a, llm = make(tmp_path)
+    r = say(a, llm, "Получил 120000", intent="CREATE_INCOME", amount_text="120000")
+    assert r.text == "🎩 Разумеется, Сэр!\nЗаписал доход: 120 000 ₽!"
+    r = say(a, llm, "Получил зарплату 120к", intent="CREATE_INCOME", amount_text="120к", category="зарплата")
+    assert "120 000 ₽ — зарплата" in r.text
+
+
+def test_amount_forms_and_yesterday(tmp_path):
+    a, llm = make(tmp_path)
+    r = say(a, llm, "Вчера потратил 2,5 тысячи на кафе", intent="CREATE_EXPENSE", amount_text="2,5 тысячи",
+            category="кафе", op_when="вчера")
+    assert "2 500 ₽ — рестораны (23 сентября)" in r.text
+
+
+def test_purchase_phrase_is_expense_not_task(tmp_path):
+    a, llm = make(tmp_path)
+    r = say(a, llm, "Купил кроссовки за 8000", intent="CREATE_TASK", title="Купить кроссовки")
+    assert "Записал расход: 8 000 ₽ — одежда" in r.text and a.tasks.active() == []
+
+
+def test_foreign_expense_converted(tmp_path):
+    a, llm = make(tmp_path)
+    r = say(a, llm, "Потратил 50 евро на ужин", intent="CREATE_EXPENSE", amount_text="50 евро",
+            currency="евро", category="ужин")
+    assert "4 506 ₽ (50 €) — рестораны" in r.text
+
+
+def test_foreign_expense_without_rates(tmp_path):
+    a, llm = make(tmp_path, cbr_ok=False)
+    r = say(a, llm, "Потратил 50 евро на ужин", intent="CREATE_EXPENSE", amount_text="50 евро", category="ужин")
+    assert "курс ЦБ" in r.text and a.finance.latest() == []
+
+
+# ---------------------------------------------------------------- остаток и статистика
+
+def test_balance_can_be_negative(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "Получил 5000", intent="CREATE_INCOME", amount_text="5000")
+    say(a, llm, "Потратил 10000 на аренду", intent="CREATE_EXPENSE", amount_text="10000", category="аренда")
+    r = say(a, llm, "Какой у меня остаток?", intent="SHOW_BALANCE")
+    assert r.text == "🎩 Ваш остаток, Сэр: −5 000 ₽!"
+
+
+def test_statistics(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "x", intent="CREATE_INCOME", amount_text="250000", category="зарплата")
+    say(a, llm, "x", intent="CREATE_EXPENSE", amount_text="18400", category="продукты")
+    say(a, llm, "x", intent="CREATE_EXPENSE", amount_text="7200", category="такси")
+    r = run(a.handle_text("💰 Ваши финансы"))
+    style_ok(r.text)
+    assert "💰 Остаток: 224 400 ₽" in r.text
+    assert "📈 Доходы за месяц: 250 000 ₽" in r.text and "📉 Расходы за месяц: 25 600 ₽" in r.text
+    assert r.text.index("🛒 Продукты — 18 400 ₽") < r.text.index("🚗 Транспорт — 7 200 ₽")
+    assert r.buttons
+
+
+def test_debt_is_not_income_or_expense(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "Сергей должен мне 5000", intent="CREATE_DEBT", person="Сергей", direction="owes_me",
+        amount_text="5000")
+    say(a, llm, "Сергей вернул мне 5000", intent="REPAY_DEBT", person="Сергей", direction="owes_me",
+        amount_text="5000")
+    assert a.finance.balance() == 0 and a.finance.latest() == []
+
+
+# ---------------------------------------------------------------- поиск
+
+def test_search_category_period(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "x", intent="CREATE_EXPENSE", amount_text="1000", category="продукты")
+    say(a, llm, "x", intent="CREATE_EXPENSE", amount_text="500", category="продукты", op_when="вчера")
+    say(a, llm, "x", intent="CREATE_EXPENSE", amount_text="300", category="такси")
+    r = say(a, llm, "Сколько я потратил на продукты за неделю?", intent="SEARCH_FINANCE", category="продукты",
+            period_text="за неделю")
+    assert r.text.startswith("🎩 На продукты за неделю — 1 500 ₽, Сэр!")
+
+
+def test_vague_period_asks(tmp_path):
+    a, llm = make(tmp_path)
+    r = say(a, llm, "Сколько я потратил за последнее время?", intent="SEARCH_FINANCE",
+            period_text="за последнее время")
+    assert r.text == "🎩 Сэр, за какой период показать данные?"
+
+
+# ---------------------------------------------------------------- исправления и удаление
+
+def test_correction_amount(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "Потратил 5000 на продукты", intent="CREATE_EXPENSE", amount_text="5000", category="продукты")
+    r = say(a, llm, "Не 5000, а 3000", intent="UPDATE_FINANCE", target="LAST", new_amount_text="3000")
+    style_ok(r.text)
+    assert a.finance.latest()[0].amount == 3000 and len(a.finance.latest()) == 1
+
+
+def test_correction_category(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "Потратил 500", intent="CREATE_EXPENSE", amount_text="500", category="продукты")
+    say(a, llm, "Это было на такси", intent="UPDATE_FINANCE", target="LAST", new_category="такси")
+    assert a.finance.latest()[0].category == "Транспорт"
+
+
+def test_delete_last_expense_keeps_income(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "x", intent="CREATE_EXPENSE", amount_text="300", category="кофе")
+    say(a, llm, "x", intent="CREATE_INCOME", amount_text="1000")
+    r = say(a, llm, "Удали последний расход", intent="DELETE_FINANCE", target="LAST", op_type="expense")
+    style_ok(r.text)
+    assert [o.type for o in a.finance.latest()] == ["income"]
+
+
+def test_delete_two_last_needs_confirmation(tmp_path):
+    a, llm = make(tmp_path)
+    for amount in ("100", "200", "300"):
+        say(a, llm, "x", intent="CREATE_EXPENSE", amount_text=amount, category="кофе")
+    r = say(a, llm, "Удали две последние записи", intent="DELETE_FINANCE", target="LAST", count=2)
+    assert r.text.startswith("🎩 Сэр, вы действительно хотите удалить эти записи (2)?")
+    a.handle_callback(r.buttons[0][0][1])
+    assert [o.amount for o in a.finance.latest()] == [100]
+
+
+def test_edit_button_deletes(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "x", intent="CREATE_EXPENSE", amount_text="100", category="кофе")
+    r = a.handle_callback("fin:edit")
+    a.handle_callback(r.buttons[0][0][1])
+    assert a.finance.latest() == []
+
+
+# ---------------------------------------------------------------- долги
+
+def test_debts_flow(tmp_path):
+    a, llm = make(tmp_path)
+    r = say(a, llm, "Сергей должен мне 5000", intent="CREATE_DEBT", person="Сергей", direction="owes_me",
+            amount_text="5000")
+    style_ok(r.text)
+    say(a, llm, "Андрей должен мне 7500", intent="CREATE_DEBT", person="Андрей", direction="owes_me",
+        amount_text="7500")
+    say(a, llm, "Я должен Максиму 5000", intent="CREATE_DEBT", person="Максим", direction="i_owe",
+        amount_text="5000")
+    r = say(a, llm, "Сергей вернул мне 2000", intent="REPAY_DEBT", person="Сергей", direction="owes_me",
+            amount_text="2000")
+    assert "погашено 2 000 ₽, осталось 3 000 ₽" in r.text
+    r = say(a, llm, "Мне должны", intent="SHOW_DEBTS", direction="owes_me")
+    assert r.text == "🎩 Вот кто вам должен, Сэр!\n\n🤝 Андрей — 7 500 ₽\n🤝 Сергей — 3 000 ₽"
+    r = say(a, llm, "Я должен", intent="SHOW_DEBTS", direction="i_owe")
+    assert r.text == "🎩 Вот кому вы должны, Сэр!\n\n💸 Максим — 5 000 ₽"
+
+
+def test_full_repayment_removes_debt(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "x", intent="CREATE_DEBT", person="Сергей", direction="owes_me", amount_text="5000")
+    r = say(a, llm, "Сергей вернул весь долг", intent="REPAY_DEBT", person="Сергей", direction="owes_me")
+    assert "полностью погашен" in r.text and a.debts.active() == []
+
+
+def test_same_person_dative_is_found(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "x", intent="CREATE_DEBT", person="Максим", direction="i_owe", amount_text="3000")
+    say(a, llm, "Я вернул Максиму 1000", intent="REPAY_DEBT", person="Максиму", amount_text="1000")
+    [(p, d)] = a.debts.active()
+    assert p.first_name == "Максим" and d.amount == 2000 and len(a.debts.people.all(a.user_id)) == 1
+
+
+def test_ambiguous_name_asks(tmp_path):
+    a, llm = make(tmp_path)
+    a.debts.create_person("Сергей Афанасьев")
+    a.debts.create_person("Сергей Петров")
+    r = say(a, llm, "Сергей должен мне 1000", intent="CREATE_DEBT", person="Сергей", direction="owes_me",
+            amount_text="1000")
+    assert r.text == "🎩 Сэр, уточните, пожалуйста, какой Сергей?" and len(r.buttons) == 3
+    pid = a.debts.find_people("Сергей Петров")[0].id
+    a.handle_callback(f"pick:{pid}")
+    [(p, d)] = a.debts.active()
+    assert p.last_name == "Петров" and d.amount == 1000
+
+
+def test_direction_from_words(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "Я должен Игорю 3000", intent="CREATE_DEBT", person="Игорь", amount_text="3000")
+    assert a.debts.active("i_owe")
+
+
+# ---------------------------------------------------------------- валюты
+
+def test_rates_view(tmp_path):
+    a, llm = make(tmp_path)
+    r = say(a, llm, "Курсы валют", intent="SHOW_CURRENCY_RATES")
+    assert r.text.startswith("🎩 Курсы ЦБ на 24 сентября, Сэр!")
+    assert "🇺🇸 Доллар — 82,45 ₽ (▲ 0,31)" in r.text and "🇪🇺 Евро — 90,12 ₽ (▼ 0,15)" in r.text
+
+
+@pytest.mark.parametrize("text,ai,expected", [
+    ("Сколько 100 долларов в рублях?", dict(amount_text="100", currency="доллары"), "100 $ = 8 245 ₽"),
+    ("100 usd", dict(), "100 $ = 8 245 ₽"),
+    ("5000 рублей в евро", dict(amount_text="5000", currency="рубли", convert_to="евро"), "5 000 ₽ = 55,48 €"),
+    ("Переведи 50 евро в доллары", dict(amount_text="50", currency="евро", convert_to="доллары"), "50 € = 54,65 $"),
+    ("Сколько будет 1000 тенге?", dict(amount_text="1000", currency="тенге"), "1 000 ₸ = 165 ₽"),
+])
+def test_convert(tmp_path, text, ai, expected):
+    a, llm = make(tmp_path)
+    r = say(a, llm, text, intent="CONVERT_CURRENCY", **ai)
+    assert expected in r.text and r.text.endswith("по курсу ЦБ!")
+
+
+def test_rates_button_async(tmp_path):
+    a, _ = make(tmp_path)
+    r = run(a.handle_callback_async("fin:rates"))
+    assert r.edit and "Курсы ЦБ" in r.text
+
+
+def test_rates_unavailable(tmp_path):
+    a, llm = make(tmp_path, cbr_ok=False)
+    r = say(a, llm, "Курс доллара", intent="SHOW_CURRENCY_RATES")
+    assert "недоступен" in r.text
+
+
+def test_reset_wipes_finance(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "x", intent="CREATE_EXPENSE", amount_text="100", category="кофе")
+    say(a, llm, "x", intent="CREATE_DEBT", person="Сергей", direction="owes_me", amount_text="5000")
+    a.handle_callback("confirm:reset_all")
+    assert a.finance.latest() == [] and a.debts.active() == []

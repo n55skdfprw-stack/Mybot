@@ -18,6 +18,9 @@ from alfred.notifications.scheduler import build_scheduler
 from alfred.database.schedule_repo import EventRepository, NotificationRepository, RuleRepository
 from alfred.services.notes import NoteService
 from alfred.services.schedule import ScheduleService
+from alfred.database.finance_repo import DebtRepository, OperationRepository, PeopleRepository
+from alfred.services.currency import CurrencyService
+from alfred.services.finance import DebtService, FinanceService
 from alfred.services.tasks import TaskService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -45,7 +48,16 @@ async def main() -> None:
         context=ContextRepository(db),
         user_id=user_id,
         tz=config.timezone,
+        finance=FinanceService(OperationRepository(db), user_id),
+        debts=DebtService(DebtRepository(db), PeopleRepository(db), user_id),
+        currency=CurrencyService(),
     )
+
+    rates = await alfred.currency.get()
+    if rates:
+        log.info("Курсы ЦБ доступны: доллар %.2f ₽ на %s", rates.rub_per_unit.get("USD", 0), rates.day)
+    else:
+        log.error("Курсы ЦБ НЕ доступны с этого сервера — пересчёт валют работать не будет.")
 
     bot = Bot(token=config.telegram_token)
     await bot.set_my_commands([BotCommand(command="start", description="Меню Альфреда")])

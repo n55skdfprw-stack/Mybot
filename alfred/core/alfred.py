@@ -22,6 +22,11 @@ from ..services.tasks import DuplicateError, TaskService, VerificationError
 from ..ui import schedule_texts as S
 from ..ui import texts as T
 from .reply import Reply
+from ..database.finance_repo import DebtRepository, OperationRepository, PeopleRepository
+from ..services.currency import CurrencyService
+from ..services.finance import DebtService, FinanceService
+from ..ui import finance_texts as F
+from .finance import FinanceMixin
 from .schedule import SCHEDULE_BUTTONS, ScheduleMixin, infer_type
 
 log = logging.getLogger(__name__)
@@ -38,14 +43,21 @@ RESTORE_RE = re.compile(
 )
 
 
-class Alfred(ScheduleMixin):
+class Alfred(ScheduleMixin, FinanceMixin):
     def __init__(self, brain: Brain, tasks: TaskService, notes: NoteService, schedule: ScheduleService,
                  context: ContextRepository, user_id: int, tz: ZoneInfo,
-                 clock: Optional[Callable[[], datetime]] = None):
+                 clock: Optional[Callable[[], datetime]] = None, *,
+                 finance: Optional[FinanceService] = None, debts: Optional[DebtService] = None,
+                 currency: Optional[CurrencyService] = None):
         self.brain = brain
         self.tasks = tasks
         self.notes = notes
         self.schedule = schedule
+        db = schedule.events.db
+        self.finance = finance or FinanceService(OperationRepository(db), user_id)
+        self.debts = debts or DebtService(DebtRepository(db), PeopleRepository(db), user_id)
+        self.currency = currency or CurrencyService()
+        self._rates = None
         self.context = context
         self.user_id = user_id
         self.tz = tz
@@ -96,6 +108,10 @@ class Alfred(ScheduleMixin):
             n = self.notes.get(ctx.entity_id)
             if n:
                 return f"заметка «{n.content}»"
+        if ctx.entity_type == "finance" and ctx.entity_id:
+            op = self.finance.get(ctx.entity_id)
+            if op:
+                return f"финансовая запись: {F.op_line(op)}"
         if ctx.entity_type == "event" and ctx.entity_id:
             e = self.schedule.get(ctx.entity_id)
             if e:
@@ -136,6 +152,8 @@ class Alfred(ScheduleMixin):
             return self.notes_view()
         if button == T.MENU_SCHEDULE:
             return self.schedule_day_view(self.today())
+        if button == T.MENU_FINANCE:
+            return self.statistics_view()
         return Reply(T.SECTION_NOT_READY)
 
     async def handle_text(self, text: str) -> Reply:
@@ -162,6 +180,8 @@ class Alfred(ScheduleMixin):
 
         result = self._guard_restore(result, text)
         result = self._guard_event_vs_note(result, text)
+        result = self._guard_finance(result, text)
+        await self._prefetch_rates(result)
         try:
             return self._execute(result, ctx)
         except (VerificationError, sqlite3.Error):
@@ -228,6 +248,19 @@ class Alfred(ScheduleMixin):
             "UPDATE_EVENT": self._update_event,
             "DELETE_EVENT": self._delete_event,
             "SHOW_SCHEDULE": self._show_schedule,
+            "CREATE_EXPENSE": self._create_op,
+            "CREATE_INCOME": self._create_op,
+            "UPDATE_FINANCE": self._update_finance,
+            "DELETE_FINANCE": self._delete_finance,
+            "SEARCH_FINANCE": self._search_finance,
+            "SHOW_STATISTICS": self._show_statistics,
+            "SHOW_BALANCE": self._show_balance,
+            "CREATE_DEBT": self._create_debt,
+            "REPAY_DEBT": self._repay_debt,
+            "DELETE_DEBT": self._delete_debt,
+            "SHOW_DEBTS": self._show_debts,
+            "SHOW_CURRENCY_RATES": self._show_rates,
+            "CONVERT_CURRENCY": self._convert,
             "CANCEL": lambda _r: Reply(T.CANCELLED if ctx.intent else T.NOTHING_TO_CANCEL),
             "GREETING": lambda _r: Reply(T.greeting(self.now())),
             "THANKS": lambda _r: Reply(T.pick(*T.THANKS)),
@@ -518,6 +551,19 @@ class Alfred(ScheduleMixin):
             r = self._load(ctx.data["result"])
             obj_id = int(parts[1])
             self._clear_pending()
+            if ctx.data["choose"] == "finance":
+                op = self.finance.get(obj_id)
+                if not op:
+                    return Reply("🎩 Сэр, этой записи уже нет!", edit=True)
+                action = {"UPDATE_FINANCE": self._update_finance, "DELETE_FINANCE": self._delete_finance}[r.intent]
+                return replace(action(r, chosen=op), edit=True)
+            if ctx.data["choose"] == "person":
+                person = self.debts.person(obj_id)
+                if not person:
+                    return Reply("🎩 Сэр, этого человека уже нет!", edit=True)
+                action = {"CREATE_DEBT": self._create_debt, "REPAY_DEBT": self._repay_debt,
+                          "DELETE_DEBT": self._delete_debt}[r.intent]
+                return replace(action(r, chosen=person), edit=True)
             if ctx.data["choose"] == "event":
                 event = self.schedule.get(obj_id)
                 if not event:
@@ -537,6 +583,9 @@ class Alfred(ScheduleMixin):
             action = {"UPDATE_NOTE": self._update_note, "DELETE_NOTE": self._delete_note}[r.intent]
             return replace(action(r, chosen=note), edit=True)
 
+        if kind == "fin":
+            return self.finance_callback(parts)
+
         if kind == "sched":
             if parts[1] == "week":
                 return self.schedule_week_view(edit=True)
@@ -550,6 +599,8 @@ class Alfred(ScheduleMixin):
                 return self._confirm_delete_rules(parts[2])
             if parts[1] == "del_series" and len(parts) == 4:
                 return self._confirm_delete_series(int(parts[2]), parts[3])
+            if parts[1] == "del_ops" and len(parts) == 3:
+                return self.confirm_delete_ops(parts[2])
             if parts[1] == "reset_all":
                 self.schedule.events.db.wipe_user_data(self.user_id)
                 left = (self.tasks.active() or self.notes.all() or
