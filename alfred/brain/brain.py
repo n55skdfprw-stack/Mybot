@@ -35,8 +35,8 @@ class Brain:
                 continue
             try:
                 result = resolve_dates(parse(raw), text, today)
-                log.info("Brain: %s due=%s new_due=%s (pro=%s)",
-                         result.intent, result.due_date, result.new_due_date, pro)
+                log.info("Brain: %s target=%r due=%s new_due=%s (pro=%s)",
+                         result.intent, result.target, result.due_date, result.new_due_date, pro)
                 return result
             except ParseError as exc:
                 log.warning("Brain parse error (pro=%s): %s | raw=%r", pro, exc, raw[:300])

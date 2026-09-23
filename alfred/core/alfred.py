@@ -35,6 +35,7 @@ class Alfred:
         self.user_id = user_id
         self.tz = tz
         self._clock = clock
+        self._message = ""
 
     # ------------------------------------------------------------------ время
     def now(self) -> datetime:
@@ -113,6 +114,7 @@ class Alfred:
 
     async def handle_text(self, text: str) -> Reply:
         text = text.strip()
+        self._message = text
         if search.normalize(text).strip(" .!") in T.CANCEL_WORDS:
             return Reply(T.CANCELLED if self._clear_pending() else T.NOTHING_TO_CANCEL)
         if text in T.MENU_BUTTONS:
@@ -196,14 +198,36 @@ class Alfred:
         return Reply(text, buttons=rows)
 
     # ------------------------------------------------------------------ дела
-    def _resolve_tasks(self, r: BrainResult) -> list[Task]:
+    def _resolve(self, r: BrainResult, kind: str) -> list:
+        """Находит объект, о котором говорит пользователь. Никогда не выбирает наугад.
+
+        1) название, которое выделил ИИ; 2) слова из самого сообщения;
+        3) «последний объект разговора» — только если в сообщении нет названия.
+        """
+        find = self.tasks.find if kind == "task" else self.notes.find
+        get = self.tasks.get if kind == "task" else self.notes.get
+
+        if r.target and r.target != "LAST":
+            found = find(r.target)
+            if found:
+                return found
+
+        by_message = find(self._message) if self._message else []
+
         ctx = self._ctx()
-        if r.target == "LAST" or (not r.target and ctx.entity_type == "task"):
-            if ctx.entity_type == "task" and ctx.entity_id:
-                t = self.tasks.get(ctx.entity_id)
-                return [t] if t and not t.completed else []
-            return []
-        return self.tasks.find(r.target) if r.target else []
+        last = None
+        if ctx.entity_type == kind and ctx.entity_id:
+            last = get(ctx.entity_id)
+            if kind == "task" and last and last.completed:
+                last = None
+
+        if last and (not by_message or any(o.id == last.id for o in by_message)):
+            if r.target == "LAST" or not r.target or any(o.id == last.id for o in by_message):
+                return [last]
+        return by_message
+
+    def _resolve_tasks(self, r: BrainResult) -> list[Task]:
+        return self._resolve(r, "task")
 
     def _create_task(self, r: BrainResult) -> Reply:
         if not r.title:
@@ -285,13 +309,7 @@ class Alfred:
 
     # ------------------------------------------------------------------ заметки
     def _resolve_notes(self, r: BrainResult) -> list[Note]:
-        ctx = self._ctx()
-        if r.target == "LAST" or (not r.target and ctx.entity_type == "note"):
-            if ctx.entity_type == "note" and ctx.entity_id:
-                n = self.notes.get(ctx.entity_id)
-                return [n] if n else []
-            return []
-        return self.notes.find(r.target) if r.target else []
+        return self._resolve(r, "note")
 
     def _create_note(self, r: BrainResult) -> Reply:
         if not r.content:

@@ -378,3 +378,38 @@ def test_tasks_view_has_no_hint_phrase(tmp_path):
     llm.said(intent="CREATE_TASK", title="Раз")
     run(a.handle_text("x"))
     assert "Нажмите на дело" not in a.tasks_view().text
+
+
+@pytest.mark.parametrize("ai_target", [None, "LAST"])
+def test_done_uses_words_not_last_object(tmp_path, ai_target):
+    """Живая ошибка: после переименования отчёта «Сделал хлеб» вычеркнуло отчёт."""
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_TASK", title="Купить хлеб")
+    llm.said(intent="CREATE_TASK", title="Подготовить отчет")
+    run(a.handle_text("x")); run(a.handle_text("y"))
+    llm.said(intent="UPDATE_TASK", target="подготовить отчет", new_title="Подготовьте отчет")
+    run(a.handle_text("Переименуй подготовить отчет в подготовьте отчет"))
+    llm.said(intent="COMPLETE_TASK", target=ai_target)
+    r = run(a.handle_text("Сделал хлеб"))
+    assert "хлеб" in r.text
+    assert [t.title for t in a.tasks.active()] == ["Подготовьте отчет"]
+
+
+def test_pronoun_still_uses_last_object(tmp_path):
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_TASK", title="Купить хлеб")
+    llm.said(intent="CREATE_TASK", title="Подготовить отчет")
+    run(a.handle_text("x")); run(a.handle_text("y"))
+    llm.said(intent="COMPLETE_TASK", target="LAST")
+    run(a.handle_text("Сделал его"))
+    assert [t.title for t in a.tasks.active()] == ["Купить хлеб"]
+
+
+def test_wrong_ai_target_falls_back_to_message(tmp_path):
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_TASK", title="Купить хлеб")
+    llm.said(intent="CREATE_TASK", title="Позвонить маме")
+    run(a.handle_text("x")); run(a.handle_text("y"))
+    llm.said(intent="COMPLETE_TASK", target="самолёт")
+    run(a.handle_text("Позвонил маме, отметь"))
+    assert [t.title for t in a.tasks.active()] == ["Купить хлеб"]
