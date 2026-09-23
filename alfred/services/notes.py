@@ -100,6 +100,7 @@ class NoteService:
 
     def set_content(self, note: Note, content: str) -> Note:
         content = content.strip()
+        content = content[:1].upper() + content[1:]
         title = make_title(content)
         self.repo.update(self.user_id, note.id, title, content)
         updated = self.repo.get(self.user_id, note.id)

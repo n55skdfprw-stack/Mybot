@@ -22,7 +22,7 @@ from ..services.tasks import DuplicateError, TaskService, VerificationError
 from ..ui import schedule_texts as S
 from ..ui import texts as T
 from .reply import Reply
-from .schedule import SCHEDULE_BUTTONS, ScheduleMixin
+from .schedule import SCHEDULE_BUTTONS, ScheduleMixin, infer_type
 
 log = logging.getLogger(__name__)
 
@@ -156,6 +156,7 @@ class Alfred(ScheduleMixin):
             return Reply(T.AI_UNAVAILABLE)
 
         result = self._guard_restore(result, text)
+        result = self._guard_event_vs_note(result, text)
         try:
             return self._execute(result, ctx)
         except (VerificationError, sqlite3.Error):
@@ -177,6 +178,20 @@ class Alfred(ScheduleMixin):
             log.info("Guard: %s -> RESTORE_TASK", r.intent)
             return replace(r, intent="RESTORE_TASK", target=None, title=None)
         return r
+
+    def _guard_event_vs_note(self, r: BrainResult, text: str) -> BrainResult:
+        """«К врачу паспорт уже не нужен» — про событие, а не про заметку (если слово «заметка» не звучит)."""
+        if r.intent not in ("UPDATE_NOTE", "DELETE_NOTE") or "заметк" in text.casefold():
+            return r
+        etype = infer_type(text)
+        if not etype or not self.schedule.find(self.today(), None, etype, None, None):
+            return r
+        log.info("Guard: %s -> event (%s)", r.intent, etype)
+        if r.intent == "DELETE_NOTE":
+            return replace(r, intent="DELETE_EVENT", event_type=etype, target=None)
+        remove = r.replace_from if not r.replace_to else None
+        return replace(r, intent="UPDATE_EVENT", event_type=etype, target=None,
+                       comment_remove=r.comment_remove or remove)
 
     # ------------------------------------------------------------------ выполнение
     def _execute(self, r: BrainResult, ctx: Context) -> Reply:
@@ -515,6 +530,8 @@ class Alfred(ScheduleMixin):
         if kind == "sched":
             if parts[1] == "week":
                 return self.schedule_week_view(edit=True)
+            if parts[1] == "month":
+                return self.schedule_month_view(edit=True)
             d = self.today() + timedelta(days=1 if parts[1] == "tomorrow" else 0)
             return self.schedule_day_view(d, edit=True)
 

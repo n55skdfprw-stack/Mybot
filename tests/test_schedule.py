@@ -324,7 +324,7 @@ def test_views_and_tomorrow_summary(tmp_path):
     r = a.handle_callback("sched:tomorrow")
     assert r.edit and "10:00–12:00 — Лекция\n📚 Спортивная физиология\n🚪 Аудитория 304" in r.text
     r = a.handle_callback("sched:week")
-    assert "📅 Завтра, 24 сентября" in r.text
+    assert "🗓️ Завтра, 24 сентября" in r.text and "на этой неделе" in r.text
     s = a.tomorrow_summary()
     assert s.text.startswith("🎩 Добрый вечер, Сэр!\n\nНапоминаю о завтрашнем расписании!")
     assert "🕙 10:00–12:00 — Лекция" in s.text and "🕕 18:00 — Тренировка (Ноги)" in s.text
@@ -341,3 +341,105 @@ def test_show_schedule_by_words(tmp_path):
     llm.said(intent="SHOW_SCHEDULE", event_when="на неделю")
     r = run(a.handle_text("Что у меня на неделе?"))
     style_ok(r.text)
+
+
+# ---------------------------------------------------------------- живые ошибки из Telegram (23.09, 19:19–19:23)
+
+def test_comment_taken_from_message_when_ai_missed(tmp_path):
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_EVENT", event_type="doctor", event_when="в пятницу", time_text="в 17:00")
+    r = run(a.handle_text("Врач в пятницу в 17:00 надо взять паспорт"))
+    assert "💬 взять паспорт" in r.text
+    assert a.schedule.day(date(2026, 9, 25))[0].comment == "взять паспорт"
+
+
+def test_event_phrase_does_not_damage_note(tmp_path):
+    """ИИ принял «К врачу паспорт уже не нужен» за правку заметки и вырезал «Паспорт»."""
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_NOTE", content="Паспорт в нижнем ящике")
+    run(a.handle_text("Запиши, что паспорт в нижнем ящике"))
+    llm.said(intent="CREATE_EVENT", event_type="doctor", event_when="в пятницу", time_text="в 17:00")
+    run(a.handle_text("Врач в пятницу в 17:00 надо взять паспорт"))
+    llm.said(intent="UPDATE_NOTE", target="паспорт", replace_from="Паспорт", replace_to="")
+    r = run(a.handle_text("К врачу паспорт уже не нужен"))
+    style_ok(r.text)
+    assert a.notes.all()[0].content == "Паспорт в нижнем ящике"
+    assert not a.schedule.day(date(2026, 9, 25))[0].comment
+
+
+def test_series_thursdays_with_extra_single_training(tmp_path):
+    """Серия пн/чт + отдельная тренировка ног на 24-е: «по четвергам теперь в 19» не должно спрашивать."""
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_EVENT", event_type="training", event_when="завтра", time_text="в 19",
+             focus="Ноги")
+    run(a.handle_text("Завтра в 19 тренировка ног"))
+    _create_series(a, llm)
+    llm.said(intent="UPDATE_EVENT", target="тренировка", event_type="training", event_when="по четвергам",
+             new_time_text="в 19")  # ИИ даже не отметил, что это серия
+    r = run(a.handle_text("Тренировки по четвергам теперь в 19"))
+    assert not r.buttons and "Изменил все будущие тренировки" in r.text
+    events = a.schedule.between(TODAY, date(2026, 12, 31))
+    series = [e for e in events if e.recurrence_id]
+    assert {e.start_time for e in series if e.date.weekday() == 3} == {"19:00"}
+    assert {e.start_time for e in series if e.date.weekday() == 0} == {"18:00"}
+    legs = [e for e in events if e.focus == "Ноги"]
+    assert len(legs) == 1 and legs[0].recurrence_id is None
+
+
+def test_week_view_compact(tmp_path):
+    a, llm, _ = make(tmp_path)
+    for when, t in (("завтра", "в 18:00"), ("завтра", "в 19:00")):
+        llm.said(intent="CREATE_EVENT", event_type="training", event_when=when, time_text=t)
+        run(a.handle_text("x"))
+    r = a.handle_callback("sched:week")
+    assert "🗓️ Завтра, 24 сентября\n18:00 — Тренировка\n19:00 — Тренировка" in r.text
+    assert "📅" not in r.text and all("📅" not in b[0] for row in r.buttons for b in row)
+
+
+def test_week_is_until_sunday_and_month_until_month_end(tmp_path):
+    a, llm, _ = make(tmp_path)
+    _create_series(a, llm)  # пн и чт до конца октября
+    week = a.handle_callback("sched:week").text
+    assert "Завтра, 24 сентября" in week and "28 сентября" not in week  # неделя — до воскресенья 27-го
+    month = a.handle_callback("sched:month").text
+    assert "Понедельник, 28 сентября" in month and "октябр" not in month
+    buttons = [b[0] for row in a.handle_callback("sched:month").buttons for b in row]
+    assert buttons == ["🗓️ Сегодня", "🗓️ Завтра", "🗓️ На этой неделе", "🗓️ В этом месяце"]
+
+
+def test_cancel_one_monday_keeps_other_mondays(tmp_path):
+    """Проверка опасения: «Отмени тренировку в понедельник» не должно удалять все понедельники."""
+    a, llm, _ = make(tmp_path)
+    _create_series(a, llm)
+    llm.said(intent="DELETE_EVENT", target="тренировка", event_type="training", event_when="в понедельник")
+    r = run(a.handle_text("Отмени тренировку в понедельник"))
+    assert not r.buttons  # без подтверждения — значит, удалено одно занятие
+    mondays = [e.date for e in a.schedule.between(TODAY, date(2026, 12, 31)) if e.date.weekday() == 0]
+    assert date(2026, 9, 28) not in mondays and date(2026, 10, 5) in mondays and len(mondays) == 4
+
+
+def test_month_view_by_words(tmp_path):
+    a, llm, _ = make(tmp_path)
+    _create_series(a, llm)
+    llm.said(intent="SHOW_SCHEDULE", event_when="в этом месяце")
+    r = run(a.handle_text("Что у меня в этом месяце?"))
+    assert "в этом месяце" in r.text
+
+
+def test_week_is_monday_to_sunday(tmp_path):
+    a, llm, clock = make(tmp_path)
+    a.schedule.create({"type": "training", "date": "2026-09-21", "start_time": "18:00"}, clock())  # прошедший пн
+    a.schedule.create({"type": "training", "date": "2026-09-27", "start_time": "12:00"}, clock())  # вс
+    a.schedule.create({"type": "training", "date": "2026-09-28", "start_time": "18:00"}, clock())  # следующий пн
+    week = a.handle_callback("sched:week").text
+    assert "Понедельник, 21 сентября" in week and "Воскресенье, 27 сентября" in week
+    assert "28 сентября" not in week
+
+
+def test_month_is_whole_month(tmp_path):
+    a, llm, clock = make(tmp_path)
+    a.schedule.create({"type": "training", "date": "2026-09-01", "start_time": "18:00"}, clock())  # прошло
+    a.schedule.create({"type": "training", "date": "2026-09-30", "start_time": "18:00"}, clock())
+    a.schedule.create({"type": "training", "date": "2026-10-01", "start_time": "18:00"}, clock())
+    month = a.handle_callback("sched:month").text
+    assert "1 сентября" in month and "30 сентября" in month and "октября" not in month

@@ -1,8 +1,10 @@
 """Распорядок в ядре Альфреда. Подключается к классу Alfred как дополнение (mixin)."""
 
+import calendar
 import logging
 import re
 from datetime import date, datetime, timedelta
+from dataclasses import replace
 from typing import Optional
 
 from ..brain.dates import find_dates, parse_date, parse_repeat, parse_time_range, parse_until
@@ -20,8 +22,21 @@ log = logging.getLogger(__name__)
 REPEAT_WORDS = re.compile(r"кажд|\bпо\s+\w+(ам|ям)\b|будн|выходн|ежедн|еженед|ежемес", re.IGNORECASE)
 TYPE_WORDS = [("training", r"тренир"), ("lecture", r"лекци"), ("practice", r"практик|семинар|\bпар[аыу]\b"),
               ("doctor", r"врач|стоматолог|терапевт|при[её]м|клиник|анализ"), ("meeting", r"встреч")]
-SCHEDULE_BUTTONS = [[("📅 Сегодня", "sched:today"), ("📅 Завтра", "sched:tomorrow")],
-                    [("🗓️ На неделю", "sched:week")]]
+SCHEDULE_BUTTONS = [[("🗓️ Сегодня", "sched:today"), ("🗓️ Завтра", "sched:tomorrow")],
+                    [("🗓️ На этой неделе", "sched:week"), ("🗓️ В этом месяце", "sched:month")]]
+TELEGRAM_LIMIT = 3800
+
+
+COMMENT_RE = re.compile(
+    r"(?:,|\s)\s*(?:и\s+)?(?:не\s+забыть|надо|нужно|не\s+забудь)?\s*"
+    r"((?:взять|захватить|принести|оплатить|подготовить|распечатать|сдать)\b.+)$",
+    re.IGNORECASE,
+)
+
+
+def comment_from_message(text: str) -> Optional[str]:
+    m = COMMENT_RE.search(text or "")
+    return m.group(1).strip(" .!") if m else None
 
 
 def infer_type(*texts: Optional[str]) -> Optional[str]:
@@ -49,21 +64,50 @@ class ScheduleMixin:
         body = "\n\n".join(S.block(e) for e in events)
         return Reply(f"🎩 Ваш распорядок {when}, Сэр!\n\n{body}", buttons=SCHEDULE_BUTTONS, edit=edit)
 
-    def schedule_week_view(self, edit: bool = False) -> Reply:
+    def _period_view(self, start: date, end: date, title: str, empty: str, edit: bool) -> Reply:
         today = self.today()
-        events = self.schedule.between(today, today + timedelta(days=6))
+        events = self.schedule.between(start, end)
         if not events:
-            return Reply("🎩 На ближайшую неделю в распорядке ничего нет, Сэр!", buttons=SCHEDULE_BUTTONS, edit=edit)
-        parts, current = [], None
+            return Reply(empty, buttons=SCHEDULE_BUTTONS, edit=edit)
+        days: list[str] = []
+        current = None
         for e in events:
             if e.date != current:
                 current = e.date
-                parts.append(f"📅 {S.day_title(e.date, today)}")
-            parts.append(S.block(e))
-        return Reply("🎩 Ваш распорядок на неделю, Сэр!\n\n" + "\n\n".join(parts), buttons=SCHEDULE_BUTTONS, edit=edit)
+                days.append(f"🗓️ {S.day_title(e.date, today)}")
+            days[-1] += "\n" + S.block(e)
+        text = f"🎩 {title}\n\n"
+        shown = 0
+        for day in days:
+            if len(text) + len(day) > TELEGRAM_LIMIT:
+                break
+            text += day + "\n\n"
+            shown += day.count("\n")
+        hidden = len(events) - shown
+        if hidden > 0:
+            text += f"…и ещё событий: {hidden}!"
+        return Reply(text.rstrip(), buttons=SCHEDULE_BUTTONS, edit=edit)
+
+    def schedule_week_view(self, edit: bool = False) -> Reply:
+        """Вся текущая неделя: с понедельника по воскресенье."""
+        today = self.today()
+        monday = today - timedelta(days=today.weekday())
+        sunday = monday + timedelta(days=6)
+        return self._period_view(monday, sunday, "Ваш распорядок на этой неделе, Сэр!",
+                                 "🎩 На этой неделе в распорядке ничего нет, Сэр!", edit)
+
+    def schedule_month_view(self, edit: bool = False) -> Reply:
+        """Весь текущий месяц: с 1-го числа по последнее."""
+        today = self.today()
+        first = today.replace(day=1)
+        last = today.replace(day=calendar.monthrange(today.year, today.month)[1])
+        return self._period_view(first, last, "Ваш распорядок в этом месяце, Сэр!",
+                                 "🎩 В этом месяце в распорядке ничего нет, Сэр!", edit)
 
     def _show_schedule(self, r: BrainResult) -> Reply:
-        when = (r.event_when or "").casefold()
+        when = (r.event_when or "").casefold() + " " + (self._message or "").casefold()
+        if "месяц" in when:
+            return self.schedule_month_view()
         if "недел" in when:
             return self.schedule_week_view()
         d = parse_date(r.event_when, self.today()) or self.today()
@@ -96,7 +140,7 @@ class ScheduleMixin:
             return self._ask(r, "time_text", f"🎩 Разумеется, Сэр! Во сколько начинается {S.TYPE_NOM[etype]}?")
 
         values = {"type": etype, "title": r.event_title, "start_time": start, "end_time": end,
-                  "comment": r.comment, "location": r.location, "discipline": r.discipline,
+                  "comment": r.comment or comment_from_message(self._message), "location": r.location, "discipline": r.discipline,
                   "focus": r.focus[:1].upper() + r.focus[1:] if r.focus else None}
 
         repeat_text = self._repeat_source(r)
@@ -132,7 +176,7 @@ class ScheduleMixin:
                          else f"🎩 Сэр, такое событие уже есть в вашем распорядке!")
         self._set_last("event", event.id)
         head = T.pick("🎩 Разумеется, Сэр! Записал в распорядок!", "🎩 Записал, Сэр!")
-        return Reply(f"{head}\n\n📅 {S.day_title(event.date, self.today())}\n{S.block(event)}")
+        return Reply(f"{head}\n\n🗓️ {S.day_title(event.date, self.today())}\n{S.block(event)}")
 
     # ------------------------------------------------------------ поиск существующего
     def _resolve_events(self, r: BrainResult) -> list[Event]:
@@ -148,11 +192,24 @@ class ScheduleMixin:
         found = self.schedule.find(self.today(), words, etype, on, at)
         if not found and at:
             found = self.schedule.find(self.today(), words, etype, on, None)
-        if r.apply_to == "series" and found:
-            weekday = self._only_weekday(r)
-            if weekday is not None:
-                found = [e for e in found if e.date.weekday() == weekday] or found
+        weekday = self._only_weekday(r) if (r.apply_to == "series" or not on) else None
+        if weekday is not None:
+            found = [e for e in found if e.date.weekday() == weekday] or found
+        if r.apply_to == "series":
+            recurring = [e for e in found if e.recurrence_id]
+            if recurring:
+                found = recurring
         return found
+
+    def _infer_series(self, r: BrainResult) -> BrainResult:
+        """«Тренировки по четвергам теперь в 19», «все тренировки» — это вся серия, даже если ИИ не отметил."""
+        if r.apply_to == "series":
+            return r
+        text = self._message or ""
+        if (r.event_when and REPEAT_WORDS.search(r.event_when)) or re.search(
+                r"\bтеперь\b|\bвсе\b|\bвсегда\b|\bкажд|\bпо\s+\w+(ам|ям)\b", text, re.IGNORECASE):
+            return replace(r, apply_to="series")
+        return r
 
     def _only_weekday(self, r: BrainResult) -> Optional[int]:
         if not r.event_when:
@@ -206,12 +263,17 @@ class ScheduleMixin:
             new_comment = fuzzy_replace(e.comment, r.comment_remove, "")
             if new_comment is None:
                 return Reply(f"🎩 Сэр, в комментарии нет слов «{r.comment_remove}»! Что именно убрать?")
-            changes["comment"] = new_comment.strip(" ,;.") or None
+            new_comment = new_comment.strip(" ,;.")
+            if re.fullmatch(r"(?:и\s+)?(?:взять|захватить|принести|оплатить|подготовить|распечатать|сдать)?",
+                            new_comment, re.IGNORECASE):
+                new_comment = ""  # от «взять паспорт» остался только глагол — убираем целиком
+            changes["comment"] = new_comment or None
         elif r.comment and (not e.comment or r.comment.casefold() not in e.comment.casefold()):
             changes["comment"] = f"{e.comment}, {r.comment}" if e.comment else r.comment
         return changes
 
     def _update_event(self, r: BrainResult, chosen: Optional[Event] = None) -> Reply:
+        r = self._infer_series(r) if not chosen else r
         picked = chosen or self._pick_event(r, self._resolve_events(r))
         if isinstance(picked, Reply):
             return picked
@@ -236,11 +298,12 @@ class ScheduleMixin:
 
         updated = self.schedule.update(e, changes, self.now())
         self._set_last("event", updated.id)
-        return Reply(f"🎩 Готово, Сэр! Обновил распорядок!\n\n📅 {S.day_title(updated.date, self.today())}"
+        return Reply(f"🎩 Готово, Сэр! Обновил распорядок!\n\n🗓️ {S.day_title(updated.date, self.today())}"
                      f"\n{S.block(updated)}")
 
     # ------------------------------------------------------------ удаление
     def _delete_event(self, r: BrainResult, chosen: Optional[Event] = None) -> Reply:
+        r = self._infer_series(r) if not chosen else r
         picked = chosen or self._pick_event(r, self._resolve_events(r))
         if isinstance(picked, Reply):
             return picked
