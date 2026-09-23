@@ -7,6 +7,12 @@ from ..database.repositories import Task, TaskRepository
 from . import search
 
 
+def capitalize(title: str) -> str:
+    """Первая буква — заглавная, остальное как написал пользователь."""
+    title = title.strip()
+    return title[:1].upper() + title[1:]
+
+
 class DuplicateError(Exception):
     pass
 
@@ -21,7 +27,7 @@ class TaskService:
         self.user_id = user_id
 
     def create(self, title: str, due: Optional[date], force: bool = False) -> Task:
-        title = title.strip()
+        title = capitalize(title)
         if not force:
             for t in self.repo.active(self.user_id):
                 if search.normalize(t.title) == search.normalize(title) and t.due_date == due:
@@ -49,7 +55,7 @@ class TaskService:
         return self.repo.get(self.user_id, task_id)
 
     def update(self, task: Task, new_title: Optional[str], new_due: Optional[date], clear_due: bool) -> Task:
-        title = new_title.strip() if new_title else task.title
+        title = capitalize(new_title) if new_title else task.title
         due = None if clear_due else (new_due if new_due else task.due_date)
         self.repo.update(self.user_id, task.id, title, due)
         updated = self.repo.get(self.user_id, task.id)

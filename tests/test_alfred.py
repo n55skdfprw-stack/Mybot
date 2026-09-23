@@ -364,3 +364,17 @@ def test_date_words_removed_from_title(tmp_path):
     run(a.handle_text("Купить хлеб завтра"))
     t = a.tasks.active()[0]
     assert t.title == "Купить хлеб" and t.due_date == date(2026, 9, 24)
+
+
+def test_titles_capitalized(tmp_path):
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_TASK", title="купить молоко")
+    r = run(a.handle_text("купить молоко"))
+    assert a.tasks.active()[0].title == "Купить молоко" and "☐ Купить молоко" in r.text
+
+
+def test_tasks_view_has_no_hint_phrase(tmp_path):
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_TASK", title="Раз")
+    run(a.handle_text("x"))
+    assert "Нажмите на дело" not in a.tasks_view().text

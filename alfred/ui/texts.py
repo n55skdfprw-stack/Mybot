@@ -85,10 +85,12 @@ def due_phrase(d: date | None, today: date) -> str:
 
 def task_line(t: Task, today: date, done: bool = False) -> str:
     box = "☑" if done else "☐"
-    return f"{box} {t.title}{due_label(t.due_date, today)}"
+    title = t.title[:1].upper() + t.title[1:]
+    return f"{box} {title}{due_label(t.due_date, today)}"
 
 
 def short(text: str, n: int = 40) -> str:
+    text = text[:1].upper() + text[1:]
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
