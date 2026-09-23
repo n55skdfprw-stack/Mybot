@@ -1,5 +1,7 @@
 """Бизнес-логика раздела «Ваши заметки»."""
 
+import os
+import re
 from typing import Optional
 
 from ..database.repositories import Note, NoteRepository
@@ -11,6 +13,59 @@ def make_title(content: str) -> str:
     words = content.strip().split()
     title = " ".join(words[:6])
     return title if len(words) <= 6 else title + "…"
+
+
+_WORD = re.compile(r"[\wё-]+", re.IGNORECASE)
+
+
+def _same_stem(a: str, b: str) -> bool:
+    """«верхнем» и «верхний», «ящике» и «ящик» — одно слово в разных формах."""
+    a, b = search.normalize(a), search.normalize(b)
+    if min(len(a), len(b)) <= 3:
+        return a == b
+    common = len(os.path.commonprefix([a, b]))
+    return common >= max(3, min(len(a), len(b)) - 3)
+
+
+def _adapt(orig: str, frm: str, to: str) -> str:
+    """Ставит новое слово в ту же форму, что и заменяемое: «нижний» → «нижнем»."""
+    if _same_stem(to, frm):
+        return orig
+    o, f, t = search.normalize(orig), search.normalize(frm), search.normalize(to)
+    p = len(os.path.commonprefix([o, f]))
+    from_end, orig_end = f[p:], o[p:]
+    if from_end and t.endswith(from_end):
+        return to[: len(to) - len(from_end)] + orig_end
+    if not from_end:
+        return to + orig_end
+    return to
+
+
+def fuzzy_replace(content: str, old: str, new: str) -> Optional[str]:
+    """Замена с учётом окончаний. None, если фрагмент не найден."""
+    idx = search.normalize(content).find(search.normalize(old))
+    if idx >= 0:
+        result = content[:idx] + new + content[idx + len(old):]
+        return " ".join(result.split()).replace(" ,", ",").replace(" .", ".")
+
+    words = list(_WORD.finditer(content))
+    old_words = _WORD.findall(old)
+    new_words = _WORD.findall(new)
+    n = len(old_words)
+    if n == 0:
+        return None
+    for i in range(len(words) - n + 1):
+        span = words[i:i + n]
+        if all(_same_stem(span[k].group(), old_words[k]) for k in range(n)):
+            if len(new_words) == n:
+                replacement = " ".join(_adapt(span[k].group(), old_words[k], new_words[k]) for k in range(n))
+            else:
+                replacement = new
+            if span[0].group()[:1].isupper() and replacement:
+                replacement = replacement[:1].upper() + replacement[1:]
+            result = content[:span[0].start()] + replacement + content[span[-1].end():]
+            return " ".join(result.split()).replace(" ,", ",").replace(" .", ".")
+    return None
 
 
 class NoteService:
@@ -38,10 +93,9 @@ class NoteService:
 
     def replace_text(self, note: Note, old: str, new: str) -> Optional[Note]:
         """Меняет фрагмент текста. Возвращает None, если фрагмент не найден."""
-        idx = search.normalize(note.content).find(search.normalize(old))
-        if idx < 0:
+        content = fuzzy_replace(note.content, old, new)
+        if content is None or not content.strip():
             return None
-        content = note.content[:idx] + new + note.content[idx + len(old):]
         return self.set_content(note, content)
 
     def set_content(self, note: Note, content: str) -> Note:

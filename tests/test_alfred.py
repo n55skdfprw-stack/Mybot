@@ -476,3 +476,29 @@ def test_guard_does_not_break_normal_create(tmp_path):
     llm.said(intent="CREATE_TASK", title="Вернуть книгу в библиотеку")
     run(a.handle_text("Вернуть книгу в библиотеку"))
     assert [t.title for t in a.tasks.active()] == ["Вернуть книгу в библиотеку"]
+
+
+@pytest.mark.parametrize("frm,to", [("верхний ящик", "нижний ящик"), ("верхний", "нижний"),
+                                    ("верхнем ящике", "нижнем ящике")])
+def test_note_replace_with_other_endings(tmp_path, frm, to):
+    """Живая ошибка: в заметке «верхнем ящике», а ИИ прислал «верхний ящик»."""
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_NOTE", content="Паспорт в верхнем ящике")
+    run(a.handle_text("Паспорт в верхнем ящике"))
+    llm.said(intent="UPDATE_NOTE", target="паспорт", replace_from=frm, replace_to=to)
+    r = run(a.handle_text("В заметке про паспорт поменяй верхний ящик на нижний"))
+    assert a.notes.all()[0].content == "Паспорт в нижнем ящике"
+    assert "нижнем ящике" in r.text
+
+
+def test_fuzzy_replace_new_noun():
+    from alfred.services.notes import fuzzy_replace
+    assert fuzzy_replace("Ключи в ящике", "ящик", "шкаф") == "Ключи в шкафе"
+    assert fuzzy_replace("Ключи в ящике", "самолёт", "шкаф") is None
+
+
+def test_notes_view_has_no_hint_phrase(tmp_path):
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_NOTE", content="Код домофона 1234")
+    run(a.handle_text("x"))
+    assert "Чтобы найти" not in a.notes_view().text

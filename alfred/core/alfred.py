@@ -139,7 +139,7 @@ class Alfred:
                 last_object=self._last_description(ctx),
                 pending=pending_question,
                 task_titles=[t.title for t in self.tasks.active()],
-                note_titles=[n.title for n in self.notes.all()],
+                note_titles=[T.short(n.content, 120) for n in self.notes.all()],
             )
         except BrainUnavailable:
             return Reply(T.AI_UNAVAILABLE)
@@ -414,9 +414,7 @@ class Alfred:
         if not notes:
             return Reply("🎩 Заметок пока нет, Сэр! Просто напишите мне, что запомнить!")
         lines = "\n".join(T.note_line(n) for n in notes[:15])
-        tail = "\n\nЧтобы найти заметку, просто спросите меня, Сэр!"
-        if len(notes) > 15:
-            tail = f"\n\nПоказаны последние 15 из {len(notes)}!" + tail
+        tail = f"\n\nПоказаны последние 15 из {len(notes)}!" if len(notes) > 15 else ""
         return Reply(f"🎩 Ваши заметки, Сэр!\n\n{lines}{tail}")
 
     # ------------------------------------------------------------------ проверки 10:00 / 14:00 / 18:00
