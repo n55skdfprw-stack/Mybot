@@ -5,6 +5,7 @@
 """
 
 import logging
+import re
 import sqlite3
 from dataclasses import asdict, replace
 from datetime import date, datetime, timedelta
@@ -23,6 +24,15 @@ from .reply import Reply
 log = logging.getLogger(__name__)
 
 PENDING_MINUTES = 10
+
+# Фразы, которые однозначно означают «верни вычеркнутое дело».
+RESTORE_RE = re.compile(
+    r"^\s*(а\s+)?(верни|верните|вернуть|восстанови)\b"
+    r"|\bне\s+(сделал|сделала|купил|купила|выполнил|выполнила|успел|успела)\b"
+    r"|\bзря\s+(вычеркнул|вычеркнула|отметил|отметила)\b"
+    r"|\bотмени\s+выполнени",
+    re.IGNORECASE,
+)
 
 
 class Alfred:
@@ -134,6 +144,7 @@ class Alfred:
         except BrainUnavailable:
             return Reply(T.AI_UNAVAILABLE)
 
+        result = self._guard_restore(result, text)
         try:
             return self._execute(result, ctx)
         except (VerificationError, sqlite3.Error):
@@ -146,6 +157,15 @@ class Alfred:
         except (VerificationError, sqlite3.Error):
             log.exception("Callback failed")
             return Reply(T.DB_ERROR, clear_source_buttons=True)
+
+    def _guard_restore(self, r: BrainResult, text: str) -> BrainResult:
+        """Страховка: «Верни молоко» — это возврат, даже если ИИ решил, что это новое дело."""
+        if r.intent in ("RESTORE_TASK", "COMPLETE_TASK", "DELETE_TASK", "UPDATE_TASK"):
+            return r
+        if RESTORE_RE.search(search.normalize(text)) and self.tasks.find_completed(text):
+            log.info("Guard: %s -> RESTORE_TASK", r.intent)
+            return replace(r, intent="RESTORE_TASK", target=None, title=None)
+        return r
 
     # ------------------------------------------------------------------ выполнение
     def _execute(self, r: BrainResult, ctx: Context) -> Reply:

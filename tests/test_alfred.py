@@ -454,3 +454,25 @@ def test_restore_when_already_in_list(tmp_path):
     llm.said(intent="RESTORE_TASK", target="молоко")
     r = run(a.handle_text("Верни молоко"))
     assert "уже есть" in r.text and len(a.tasks.active()) == 1
+
+
+@pytest.mark.parametrize("phrase", ["Верни молоко", "Верни молоко я его не купил",
+                                    "Я не купил молоко", "Зря вычеркнул молоко"])
+def test_restore_guard_when_ai_says_create(tmp_path, phrase):
+    """Живая ошибка: ИИ понял «Верни молоко» как новое дело «Вернуть молоко»."""
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_TASK", title="Купить молоко")
+    run(a.handle_text("x"))
+    llm.said(intent="COMPLETE_TASK", target="молоко")
+    run(a.handle_text("Сделал молоко"))
+    llm.said(intent="CREATE_TASK", title="Вернуть молоко")
+    r = run(a.handle_text(phrase))
+    assert "Вернул" in r.text
+    assert [t.title for t in a.tasks.active()] == ["Купить молоко"]
+
+
+def test_guard_does_not_break_normal_create(tmp_path):
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_TASK", title="Вернуть книгу в библиотеку")
+    run(a.handle_text("Вернуть книгу в библиотеку"))
+    assert [t.title for t in a.tasks.active()] == ["Вернуть книгу в библиотеку"]
