@@ -16,9 +16,11 @@ class BrainResult:
     intent: str
     title: Optional[str] = None
     due_date: Optional[date] = None
+    due_when: Optional[str] = None
     target: Optional[str] = None
     new_title: Optional[str] = None
     new_due_date: Optional[date] = None
+    new_due_when: Optional[str] = None
     clear_due_date: bool = False
     content: Optional[str] = None
     replace_from: Optional[str] = None
@@ -78,9 +80,11 @@ def parse(raw: str) -> BrainResult:
         intent=intent,
         title=_str(data.get("title")),
         due_date=_date(data.get("due_date")),
+        due_when=_str(data.get("due_when")),
         target=_str(data.get("target")),
         new_title=_str(data.get("new_title")),
         new_due_date=_date(data.get("new_due_date")),
+        new_due_when=_str(data.get("new_due_when")),
         clear_due_date=data.get("clear_due_date") is True,
         content=_str(data.get("content")),
         replace_from=_str(data.get("replace_from")),

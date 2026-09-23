@@ -65,7 +65,7 @@ def style_ok(text: str):
 
 def test_create_task(tmp_path):
     a, llm, _ = make(tmp_path)
-    llm.said(intent="CREATE_TASK", title="Купить корм коту", due_date="2026-09-24")
+    llm.said(intent="CREATE_TASK", title="Купить корм коту", due_when="завтра")
     r = run(a.handle_text("Купить корм коту завтра"))
     style_ok(r.text)
     assert "Купить корм коту — завтра" in r.text
@@ -86,9 +86,9 @@ def test_duplicate_blocked_and_forced(tmp_path):
 
 def test_reschedule_task_keeps_title(tmp_path):
     a, llm, _ = make(tmp_path)
-    llm.said(intent="CREATE_TASK", title="Купить корм коту", due_date="2026-09-24")
+    llm.said(intent="CREATE_TASK", title="Купить корм коту", due_when="завтра")
     run(a.handle_text("Купить корм коту завтра"))
-    llm.said(intent="UPDATE_TASK", target="корм", new_due_date="2026-09-25")
+    llm.said(intent="UPDATE_TASK", target="корм", new_due_when="на пятницу")
     r = run(a.handle_text("Перенеси корм на пятницу"))
     style_ok(r.text)
     t = a.tasks.active()[0]
@@ -98,9 +98,9 @@ def test_reschedule_task_keeps_title(tmp_path):
 
 def test_correction_uses_last_object(tmp_path):
     a, llm, _ = make(tmp_path)
-    llm.said(intent="CREATE_TASK", title="Подготовить отчёт", due_date="2026-09-25")
+    llm.said(intent="CREATE_TASK", title="Подготовить отчёт", due_when="в пятницу")
     run(a.handle_text("Подготовить отчёт в пятницу"))
-    llm.said(intent="UPDATE_TASK", target="LAST", new_due_date="2026-09-26")
+    llm.said(intent="UPDATE_TASK", target="LAST", new_due_when="на субботу")
     run(a.handle_text("Нет, на субботу"))
     assert a.tasks.active()[0].due_date == date(2026, 9, 26)
     assert len(a.tasks.active()) == 1  # исправление, а не новая запись
@@ -228,7 +228,7 @@ def test_checks(tmp_path):
     a, llm, _ = make(tmp_path)
     assert a.check_message("morning") is None  # нет дел — не беспокоим
     llm.said(intent="CREATE_TASK", title="Купить корм коту")
-    llm.said(intent="CREATE_TASK", title="Будущее дело", due_date="2026-10-10")
+    llm.said(intent="CREATE_TASK", title="Будущее дело", due_when="10 октября")
     run(a.handle_text("x")); run(a.handle_text("y"))
     m = a.check_message("morning")
     assert "Купить корм коту" in m.text and "Будущее дело" not in m.text
@@ -299,3 +299,68 @@ def test_all_replies_follow_style(tmp_path):
     phrases = re.findall(r'"(🎩[^"]*)"', src)
     for p in phrases:
         assert not p.rstrip().endswith("."), p
+
+
+# ---------------------------------------------------------------- даты (среда, 23 сентября 2026)
+
+@pytest.mark.parametrize("phrase,expected", [
+    ("сегодня", date(2026, 9, 23)),
+    ("завтра", date(2026, 9, 24)),
+    ("послезавтра", date(2026, 9, 25)),
+    ("в пятницу", date(2026, 9, 25)),
+    ("на пятницу", date(2026, 9, 25)),
+    ("Нет давай на пятницу", date(2026, 9, 25)),
+    ("в среду", date(2026, 9, 30)),
+    ("в следующую пятницу", date(2026, 10, 2)),
+    ("в понедельник", date(2026, 9, 28)),
+    ("на выходных", date(2026, 9, 26)),
+    ("через 3 дня", date(2026, 9, 26)),
+    ("через два дня", date(2026, 9, 25)),
+    ("через неделю", date(2026, 9, 30)),
+    ("через 2 недели", date(2026, 10, 7)),
+    ("через месяц", date(2026, 10, 23)),
+    ("15 октября", date(2026, 10, 15)),
+    ("5 марта", date(2027, 3, 5)),
+    ("1 мая", date(2027, 5, 1)),
+    ("3 марта", date(2027, 3, 3)),
+    ("01.10", date(2026, 10, 1)),
+    ("01.10.2027", date(2027, 10, 1)),
+])
+def test_dates(phrase, expected):
+    from alfred.brain.dates import parse_date
+    assert parse_date(phrase, TODAY) == expected
+
+
+def test_live_scenario_from_telegram(tmp_path):
+    """Сценарий, на котором нашлась ошибка: завтра → на пятницу."""
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_TASK", title="Купить корм собаке", due_when="завтра")
+    r = run(a.handle_text("Купить корм собаке завтра"))
+    assert "— завтра" in r.text
+    llm.said(intent="UPDATE_TASK", target="LAST", new_due_when="на пятницу")
+    run(a.handle_text("Нет давай на пятницу"))
+    assert a.tasks.active()[0].due_date == date(2026, 9, 25)
+
+
+def test_ai_invented_date_is_ignored(tmp_path):
+    """Если ИИ сам «посчитал» дату, а в словах даты нет — дата не ставится."""
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_TASK", title="Позвонить маме", due_date="2026-09-29")
+    run(a.handle_text("Позвонить маме"))
+    assert a.tasks.active()[0].due_date is None
+
+
+def test_date_fallback_from_message(tmp_path):
+    """ИИ забыл процитировать дату — Альфред найдёт её в сообщении сам."""
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_TASK", title="Купить хлеб")
+    run(a.handle_text("Купить хлеб в субботу"))
+    assert a.tasks.active()[0].due_date == date(2026, 9, 26)
+
+
+def test_date_words_removed_from_title(tmp_path):
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_TASK", title="Купить хлеб завтра", due_when="завтра")
+    run(a.handle_text("Купить хлеб завтра"))
+    t = a.tasks.active()[0]
+    assert t.title == "Купить хлеб" and t.due_date == date(2026, 9, 24)

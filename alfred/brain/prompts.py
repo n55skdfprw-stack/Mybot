@@ -15,11 +15,11 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 
 Поля JSON (лишние поля не добавляй, неизвестные ставь null):
 - "intent": одно из: CREATE_TASK, UPDATE_TASK, COMPLETE_TASK, DELETE_TASK, SHOW_TASKS, CREATE_NOTE, UPDATE_NOTE, DELETE_NOTE, SEARCH_NOTE, SHOW_NOTES, ANSWER, CANCEL, GREETING, THANKS, OTHER_SECTION, UNKNOWN
-- "title": название нового дела, коротко, с большой буквы, без даты (строка или null)
-- "due_date": дата дела в формате ГГГГ-ММ-ДД (строка или null). Бери дату строго из календаря ниже.
+- "title": название нового дела, коротко, с большой буквы, БЕЗ слов о дате (строка или null)
+- "due_when": слова пользователя о дате дела, дословно, как он их написал: «завтра», «в пятницу», «15 октября», «через 3 дня» (строка или null). Сам дату НЕ вычисляй.
 - "target": как пользователь назвал существующее дело/заметку, которое нужно найти (строка или null). Если пользователь говорит «её», «его», «это», «последнее» и имеет в виду последний объект из контекста — пиши "LAST".
 - "new_title": новое название дела (строка или null)
-- "new_due_date": новая дата дела ГГГГ-ММ-ДД (строка или null)
+- "new_due_when": слова пользователя о НОВОЙ дате дела, дословно: «на пятницу», «на следующую среду» (строка или null). Сам дату НЕ вычисляй.
 - "clear_due_date": true, если дату у дела нужно убрать
 - "content": полный текст новой заметки или полностью новый текст заметки (строка или null)
 - "replace_from": какой фрагмент заметки заменить (строка или null)
@@ -44,7 +44,7 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 - Если непонятно — UNKNOWN. Ничего не выдумывай.
 
 Пример 1. Сообщение: «Купить корм коту завтра» →
-{"intent":"CREATE_TASK","title":"Купить корм коту","due_date":"<дата завтра>","target":null,"new_title":null,"new_due_date":null,"clear_due_date":false,"content":null,"replace_from":null,"replace_to":null,"query":null,"scope":"one","force_duplicate":false,"answer":null,"section":null}
+{"intent":"CREATE_TASK","title":"Купить корм коту","due_when":"завтра","target":null,"new_title":null,"new_due_when":null,"clear_due_date":false,"content":null,"replace_from":null,"replace_to":null,"query":null,"scope":"one","force_duplicate":false,"answer":null,"section":null}
 
 Пример 2. Сообщение: «Запиши, что паспорт лежит в верхнем ящике» →
 {"intent":"CREATE_NOTE","content":"Паспорт лежит в верхнем ящике","scope":"one"}
@@ -53,22 +53,17 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 {"intent":"UPDATE_NOTE","target":"паспорт","replace_from":"верхнем ящике","replace_to":"нижнем ящике","scope":"one"}
 
 Пример 4. Сообщение: «Перенеси корм на пятницу» →
-{"intent":"UPDATE_TASK","target":"корм","new_due_date":"<дата пятницы>","scope":"one"}
+{"intent":"UPDATE_TASK","target":"корм","new_due_when":"на пятницу","scope":"one"}
+
+Пример 5. Последний объект — дело «Купить корм коту». Сообщение: «Нет, давай на субботу» →
+{"intent":"UPDATE_TASK","target":"LAST","new_due_when":"на субботу","scope":"one"}
 """
 
 
 def build_user_prompt(text: str, today: date, last_object: str | None, pending: str | None,
                       task_titles: list[str], note_titles: list[str]) -> str:
-    calendar_lines = []
-    for i in range(15):
-        d = today + timedelta(days=i)
-        label = {0: " (сегодня)", 1: " (завтра)", 2: " (послезавтра)"}.get(i, "")
-        calendar_lines.append(f"{d.isoformat()} — {WEEKDAYS[d.weekday()]}{label}")
-
     parts = [
-        "Календарь на ближайшие 2 недели:",
-        *calendar_lines,
-        "",
+        f"Сегодня: {WEEKDAYS[today.weekday()]}.",
         "Активные дела: " + ("; ".join(task_titles[:30]) if task_titles else "нет"),
         "Заметки (заголовки): " + ("; ".join(note_titles[:30]) if note_titles else "нет"),
         "Последний объект разговора: " + (last_object or "нет"),
