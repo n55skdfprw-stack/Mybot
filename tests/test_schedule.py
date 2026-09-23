@@ -514,3 +514,19 @@ def test_negation_when_ai_passed_note_text(tmp_path):
     assert "Обновил распорядок" in r.text
     assert not a.schedule.day(date(2026, 9, 25))[0].comment
     assert a.notes.all()[0].content == "Паспорт лежит в нижнем ящике"
+
+
+def test_reset_all_needs_confirmation_and_wipes_everything(tmp_path):
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_TASK", title="Купить хлеб")
+    llm.said(intent="CREATE_NOTE", content="Код 1234")
+    run(a.handle_text("x")); run(a.handle_text("y"))
+    _create_series(a, llm)
+    r = a.reset_request()
+    assert r.text.startswith("🎩") and "?" in r.text
+    a.handle_callback("confirm:no")
+    assert a.tasks.active() and a.notes.all()
+    r = a.handle_callback("confirm:reset_all")
+    style_ok(r.text)
+    assert not a.tasks.active() and not a.notes.all()
+    assert a.schedule.between(date(2000, 1, 1), date(2100, 1, 1)) == [] and pending(a) == []

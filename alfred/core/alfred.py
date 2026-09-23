@@ -123,6 +123,11 @@ class Alfred(ScheduleMixin):
         self._clear_pending()
         return Reply(T.greeting(self.now()))
 
+    def reset_request(self) -> Reply:
+        return Reply("🎩 Сэр, вы действительно хотите удалить ВСЁ: дела, заметки и весь распорядок?\n\n"
+                     "Вернуть данные будет невозможно!",
+                     buttons=[[("🗑 Да, удалить всё", "confirm:reset_all")], [("↩️ Нет, оставить", "confirm:no")]])
+
     def open_section(self, button: str) -> Reply:
         self._clear_pending()
         if button == T.MENU_TASKS:
@@ -543,6 +548,13 @@ class Alfred(ScheduleMixin):
         if kind == "confirm":
             if parts[1] == "del_series" and len(parts) == 4:
                 return self._confirm_delete_series(int(parts[2]), parts[3])
+            if parts[1] == "reset_all":
+                self.schedule.events.db.wipe_user_data(self.user_id)
+                left = (self.tasks.active() or self.notes.all() or
+                        self.schedule.between(date(2000, 1, 1), date(2100, 1, 1)))
+                if left:
+                    raise VerificationError("wipe failed")
+                return Reply("🎩 Готово, Сэр! Всё очищено, начинаем с чистого листа!", edit=True)
             if parts[1] == "del_all_tasks":
                 self.tasks.delete(self.tasks.active())
                 self._set_last("task", None)

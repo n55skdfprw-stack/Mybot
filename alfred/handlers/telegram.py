@@ -4,7 +4,7 @@ import logging
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Message
 
 from ..core.alfred import Alfred
@@ -31,6 +31,11 @@ def build_router(alfred: Alfred, owner_id: int) -> Router:
     async def on_start(message: Message):
         reply = alfred.start()
         await message.answer(reply.text, reply_markup=main_menu())
+
+    @router.message(Command("reset"))
+    async def on_reset(message: Message):
+        reply = alfred.reset_request()
+        await message.answer(reply.text, reply_markup=inline(reply.buttons))
 
     @router.message(F.text)
     async def on_text(message: Message, bot: Bot):

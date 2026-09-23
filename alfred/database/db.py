@@ -132,6 +132,12 @@ class Database:
         finally:
             conn.close()
 
+    def wipe_user_data(self, user_id: int) -> None:
+        """Полная очистка данных пользователя (сам пользователь остаётся). Одна транзакция."""
+        with self.connect() as conn:
+            for table in ("notifications", "events", "recurrences", "tasks", "notes", "conversation_context"):
+                conn.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
+
     def migrate(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
