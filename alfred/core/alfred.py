@@ -17,9 +17,12 @@ from ..brain.parser import BrainResult
 from ..database.repositories import Context, ContextRepository, Note, Task
 from ..services import search
 from ..services.notes import NoteService
+from ..services.schedule import ScheduleService
 from ..services.tasks import DuplicateError, TaskService, VerificationError
+from ..ui import schedule_texts as S
 from ..ui import texts as T
 from .reply import Reply
+from .schedule import SCHEDULE_BUTTONS, ScheduleMixin
 
 log = logging.getLogger(__name__)
 
@@ -35,12 +38,14 @@ RESTORE_RE = re.compile(
 )
 
 
-class Alfred:
-    def __init__(self, brain: Brain, tasks: TaskService, notes: NoteService, context: ContextRepository,
-                 user_id: int, tz: ZoneInfo, clock: Optional[Callable[[], datetime]] = None):
+class Alfred(ScheduleMixin):
+    def __init__(self, brain: Brain, tasks: TaskService, notes: NoteService, schedule: ScheduleService,
+                 context: ContextRepository, user_id: int, tz: ZoneInfo,
+                 clock: Optional[Callable[[], datetime]] = None):
         self.brain = brain
         self.tasks = tasks
         self.notes = notes
+        self.schedule = schedule
         self.context = context
         self.user_id = user_id
         self.tz = tz
@@ -91,6 +96,10 @@ class Alfred:
             n = self.notes.get(ctx.entity_id)
             if n:
                 return f"заметка «{n.content}»"
+        if ctx.entity_type == "event" and ctx.entity_id:
+            e = self.schedule.get(ctx.entity_id)
+            if e:
+                return f"событие распорядка «{S.label(e)}» {e.date.isoformat()} в {e.start_time}"
         return None
 
     @staticmethod
@@ -120,6 +129,8 @@ class Alfred:
             return self.tasks_view()
         if button == T.MENU_NOTES:
             return self.notes_view()
+        if button == T.MENU_SCHEDULE:
+            return self.schedule_day_view(self.today())
         return Reply(T.SECTION_NOT_READY)
 
     async def handle_text(self, text: str) -> Reply:
@@ -193,6 +204,10 @@ class Alfred:
             "DELETE_NOTE": self._delete_note,
             "SEARCH_NOTE": self._search_note,
             "SHOW_NOTES": lambda _r: self.notes_view(),
+            "CREATE_EVENT": self._create_event,
+            "UPDATE_EVENT": self._update_event,
+            "DELETE_EVENT": self._delete_event,
+            "SHOW_SCHEDULE": self._show_schedule,
             "CANCEL": lambda _r: Reply(T.CANCELLED if ctx.intent else T.NOTHING_TO_CANCEL),
             "GREETING": lambda _r: Reply(T.greeting(self.now())),
             "THANKS": lambda _r: Reply(T.pick(*T.THANKS)),
@@ -426,6 +441,8 @@ class Alfred:
         open_lines = "\n".join(T.task_line(t, today) for t in relevant)
 
         if period == "morning":
+            if self.schedule.morning_merged(today):
+                return None  # сводка уже пришла вместе с напоминанием о лекции
             text = f"🎩 {T.day_greeting(self.now())}, Сэр!\n\nВот актуальный список дел!\n\n{open_lines}"
             buttons = [[("❌ Не актуально!", "chk:notactual"), ("👍 Спасибо, Альфред!", "chk:thanks")]]
             return Reply(text, buttons=buttons)
@@ -476,6 +493,12 @@ class Alfred:
             r = self._load(ctx.data["result"])
             obj_id = int(parts[1])
             self._clear_pending()
+            if ctx.data["choose"] == "event":
+                event = self.schedule.get(obj_id)
+                if not event:
+                    return Reply("🎩 Сэр, этого события уже нет в распорядке!", edit=True)
+                action = {"UPDATE_EVENT": self._update_event, "DELETE_EVENT": self._delete_event}[r.intent]
+                return replace(action(r, chosen=event), edit=True)
             if ctx.data["choose"] == "task":
                 task = self.tasks.get(obj_id)
                 if not task:
@@ -489,7 +512,15 @@ class Alfred:
             action = {"UPDATE_NOTE": self._update_note, "DELETE_NOTE": self._delete_note}[r.intent]
             return replace(action(r, chosen=note), edit=True)
 
+        if kind == "sched":
+            if parts[1] == "week":
+                return self.schedule_week_view(edit=True)
+            d = self.today() + timedelta(days=1 if parts[1] == "tomorrow" else 0)
+            return self.schedule_day_view(d, edit=True)
+
         if kind == "confirm":
+            if parts[1] == "del_series" and len(parts) == 4:
+                return self._confirm_delete_series(int(parts[2]), parts[3])
             if parts[1] == "del_all_tasks":
                 self.tasks.delete(self.tasks.active())
                 self._set_last("task", None)

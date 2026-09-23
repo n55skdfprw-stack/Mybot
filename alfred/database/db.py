@@ -8,7 +8,7 @@ from typing import Iterator
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -55,6 +55,58 @@ CREATE TABLE IF NOT EXISTS conversation_context (
     expires_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS recurrences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    kind TEXT NOT NULL,              -- weekly | monthly
+    weekdays TEXT,                   -- «0,3» для пн и чт
+    month_day INTEGER,
+    type TEXT NOT NULL,
+    title TEXT,
+    start_time TEXT NOT NULL,
+    end_time TEXT,
+    comment TEXT,
+    location TEXT,
+    discipline TEXT,
+    focus TEXT,
+    start_date TEXT NOT NULL,
+    end_date TEXT,
+    generated_until TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    type TEXT NOT NULL,
+    title TEXT,
+    date TEXT NOT NULL,
+    start_time TEXT NOT NULL,
+    end_time TEXT,
+    comment TEXT,
+    location TEXT,
+    discipline TEXT,
+    focus TEXT,
+    recurrence_id INTEGER REFERENCES recurrences(id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_events_user_date ON events(user_id, date);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    event_id INTEGER,
+    type TEXT NOT NULL,
+    scheduled_at TEXT NOT NULL,      -- местное время «ГГГГ-ММ-ДДTЧЧ:ММ»
+    sent INTEGER NOT NULL DEFAULT 0,
+    cancelled INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    sent_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_notif_pending ON notifications(user_id, sent, cancelled, scheduled_at);
+
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 """
 
@@ -86,4 +138,6 @@ class Database:
             row = conn.execute("SELECT version FROM schema_version").fetchone()
             if row is None:
                 conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
+            elif row["version"] < SCHEMA_VERSION:
+                conn.execute("UPDATE schema_version SET version=?", (SCHEMA_VERSION,))
         log.info("База данных готова: %s", self.path)

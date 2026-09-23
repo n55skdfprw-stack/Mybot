@@ -8,7 +8,8 @@ from typing import Optional
 
 from .prompts import INTENTS
 
-SECTIONS = {"schedule", "finance", "birthdays", "dossier", "weather"}
+SECTIONS = {"finance", "birthdays", "dossier", "weather"}
+EVENT_TYPES = {"lecture", "practice", "training", "doctor", "meeting", "other"}
 
 
 @dataclass
@@ -30,6 +31,20 @@ class BrainResult:
     force_duplicate: bool = False
     answer: Optional[str] = None
     section: Optional[str] = None
+    event_type: Optional[str] = None
+    event_title: Optional[str] = None
+    event_when: Optional[str] = None
+    time_text: Optional[str] = None
+    new_event_when: Optional[str] = None
+    new_time_text: Optional[str] = None
+    location: Optional[str] = None
+    discipline: Optional[str] = None
+    focus: Optional[str] = None
+    comment: Optional[str] = None
+    comment_remove: Optional[str] = None
+    repeat_text: Optional[str] = None
+    until_text: Optional[str] = None
+    apply_to: str = "one"
 
 
 class ParseError(Exception):
@@ -94,4 +109,18 @@ def parse(raw: str) -> BrainResult:
         force_duplicate=data.get("force_duplicate") is True,
         answer=_str(data.get("answer")),
         section=section if section in SECTIONS else None,
+        event_type=_str(data.get("event_type")) if data.get("event_type") in EVENT_TYPES else None,
+        event_title=_str(data.get("event_title")),
+        event_when=_str(data.get("event_when")),
+        time_text=_str(data.get("time_text")),
+        new_event_when=_str(data.get("new_event_when")),
+        new_time_text=_str(data.get("new_time_text")),
+        location=_str(data.get("location")),
+        discipline=_str(data.get("discipline")),
+        focus=_str(data.get("focus")),
+        comment=_str(data.get("comment")),
+        comment_remove=_str(data.get("comment_remove")),
+        repeat_text=_str(data.get("repeat_text")),
+        until_text=_str(data.get("until_text")),
+        apply_to="series" if data.get("apply_to") == "series" else "one",
     )

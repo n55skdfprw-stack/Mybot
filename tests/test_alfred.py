@@ -14,6 +14,8 @@ from alfred.brain.parser import ParseError, parse
 from alfred.core.alfred import Alfred
 from alfred.database.db import Database
 from alfred.database.repositories import ContextRepository, NoteRepository, TaskRepository, UserRepository
+from alfred.database.schedule_repo import EventRepository, NotificationRepository, RuleRepository
+from alfred.services.schedule import ScheduleService
 from alfred.services.notes import NoteService
 from alfred.services.tasks import TaskService
 
@@ -45,8 +47,9 @@ def make(tmp_path, llm=None):
     db.migrate()
     uid = UserRepository(db).ensure(1, "Europe/Moscow", "Санкт-Петербург")
     llm = llm or FakeLLM()
+    schedule = ScheduleService(EventRepository(db), RuleRepository(db), NotificationRepository(db), uid)
     alfred = Alfred(Brain(llm), TaskService(TaskRepository(db), uid), NoteService(NoteRepository(db), uid),
-                    ContextRepository(db), uid, TZ, clock=lambda: NOW)
+                    schedule, ContextRepository(db), uid, TZ, clock=lambda: NOW)
     return alfred, llm, db
 
 
@@ -291,6 +294,8 @@ def test_menu_buttons_do_not_call_ai(tmp_path):
     style_ok(r.text)
     r = run(a.handle_text("💰 Ваши финансы"))
     style_ok(r.text)  # раздел в разработке, но отвечает вежливо
+    r = run(a.handle_text("🕰️ Ваш распорядок"))
+    style_ok(r.text)
 
 
 def test_all_replies_follow_style(tmp_path):

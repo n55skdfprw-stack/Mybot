@@ -14,7 +14,9 @@ from alfred.database.db import Database
 from alfred.database.repositories import ContextRepository, NoteRepository, TaskRepository, UserRepository
 from alfred.handlers.telegram import build_dispatcher
 from alfred.notifications.scheduler import build_scheduler
+from alfred.database.schedule_repo import EventRepository, NotificationRepository, RuleRepository
 from alfred.services.notes import NoteService
+from alfred.services.schedule import ScheduleService
 from alfred.services.tasks import TaskService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -38,6 +40,7 @@ async def main() -> None:
         brain=Brain(llm),
         tasks=TaskService(TaskRepository(db), user_id),
         notes=NoteService(NoteRepository(db), user_id),
+        schedule=ScheduleService(EventRepository(db), RuleRepository(db), NotificationRepository(db), user_id),
         context=ContextRepository(db),
         user_id=user_id,
         tz=config.timezone,
@@ -50,7 +53,7 @@ async def main() -> None:
     scheduler = build_scheduler(bot, alfred, config.owner_id)
     scheduler.start()
 
-    log.info("Альфред запущен (версия 1.7). База: %s", config.database_path)
+    log.info("Альфред запущен (версия 2.0). База: %s", config.database_path)
     await dp.start_polling(bot)
 
 
