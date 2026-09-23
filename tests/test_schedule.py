@@ -563,3 +563,22 @@ def test_delete_all_trainings_after_thursday_split(tmp_path):
     assert r.text.endswith("?")
     a.handle_callback(r.buttons[0][0][1])
     assert a.schedule.between(TODAY, date(2027, 12, 31)) == []
+
+
+@pytest.mark.parametrize("ai", [
+    dict(intent="DELETE_EVENT", target="все тренировки", event_type="other", apply_to="series"),
+    dict(intent="DELETE_EVENT", target=None, event_type=None),
+    dict(intent="DELETE_EVENT", target="тренировки", event_type="training", event_when="все"),
+])
+def test_delete_all_trainings_robust_to_ai(tmp_path, ai):
+    """Живая ошибка 24.09, 00:57: «Удалить все тренировки» → «не нашёл»."""
+    a, llm, _ = make(tmp_path)
+    _create_series(a, llm)
+    llm.said(intent="UPDATE_EVENT", target="тренировка", event_type="training", event_when="по четвергам",
+             new_time_text="в 19", apply_to="series")
+    run(a.handle_text("Тренировки по четвергам теперь в 19"))
+    llm.said(**ai)
+    r = run(a.handle_text("Удалить все тренировки"))
+    assert "не нашёл" not in r.text and r.text.endswith("?")
+    a.handle_callback(r.buttons[0][0][1])
+    assert a.schedule.between(TODAY, date(2027, 12, 31)) == []

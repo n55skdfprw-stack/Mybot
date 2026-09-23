@@ -193,10 +193,12 @@ class ScheduleMixin:
     def _resolve_events(self, r: BrainResult) -> list[Event]:
         ctx = self._ctx()
         last = self.schedule.get(ctx.entity_id) if ctx.entity_type == "event" and ctx.entity_id else None
-        if r.target == "LAST" or (not r.target and not r.event_type and not r.event_when):
+        # Тип по словам пользователя важнее догадки ИИ: «тренировки» — это тренировки, даже если ИИ сказал «другое».
+        said = infer_type(r.target, self._message)
+        if r.target == "LAST" or (not r.target and not r.event_type and not r.event_when and not said):
             if last:
                 return [last]
-        etype = r.event_type or infer_type(r.target)
+        etype = said or (r.event_type if r.event_type != "other" else None)
         on = None if (r.event_when and REPEAT_WORDS.search(r.event_when)) else parse_date(r.event_when, self.today())
         at = parse_time_range(r.time_text)[0] if r.time_text else None
         if not at and r.intent == "DELETE_EVENT":
@@ -205,6 +207,10 @@ class ScheduleMixin:
         found = self.schedule.find(self.today(), words, etype, on, at)
         if not found and at:
             found = self.schedule.find(self.today(), words, etype, on, None)
+        if not found and words and etype:
+            found = self.schedule.find(self.today(), None, etype, on, None)
+        if not found and on and etype and REPEAT_WORDS.search(self._message or ""):
+            found = self.schedule.find(self.today(), None, etype, None, None)
         if r.comment_remove and len(found) > 1:
             # «К врачу паспорт уже не нужен» — берём то событие, где паспорт действительно есть.
             with_it = [e for e in found if e.comment and fuzzy_replace(e.comment, r.comment_remove, "") is not None]
