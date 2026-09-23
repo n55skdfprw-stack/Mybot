@@ -224,6 +224,7 @@ class Alfred(ScheduleMixin, FinanceMixin):
             if ctx.intent and ctx.missing_parameter and r.answer:
                 pending = self._load(ctx.data["result"])
                 pending = replace(pending, **{ctx.missing_parameter: r.answer})
+                self._message = f"{self._message} {r.answer}"
                 self._clear_pending()
                 return self._execute(pending, Context())
             return Reply(T.NOT_UNDERSTOOD)

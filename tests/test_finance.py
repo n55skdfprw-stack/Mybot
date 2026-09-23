@@ -52,6 +52,10 @@ def run(coro):
 
 
 def say(a, llm, text, **ai):
+    """Сообщение-заглушка «x» превращается в настоящую фразу, как её написал бы человек."""
+    if text in ("x", "y") and ai.get("intent") in ("CREATE_EXPENSE", "CREATE_INCOME"):
+        verb = "Потратил" if ai["intent"] == "CREATE_EXPENSE" else "Получил"
+        text = f"{verb} {ai.get('amount_text', '')}" + (f" на {ai['category']}" if ai.get("category") else "")
     llm.said(**ai)
     return run(a.handle_text(text))
 
@@ -169,7 +173,7 @@ def test_correction_amount(tmp_path):
 
 def test_correction_category(tmp_path):
     a, llm = make(tmp_path)
-    say(a, llm, "Потратил 500", intent="CREATE_EXPENSE", amount_text="500", category="продукты")
+    say(a, llm, "Потратил 500 на продукты", intent="CREATE_EXPENSE", amount_text="500", category="продукты")
     say(a, llm, "Это было на такси", intent="UPDATE_FINANCE", target="LAST", new_category="такси")
     assert a.finance.latest()[0].category == "Транспорт"
 
@@ -295,3 +299,40 @@ def test_reset_wipes_finance(tmp_path):
     say(a, llm, "x", intent="CREATE_DEBT", person="Сергей", direction="owes_me", amount_text="5000")
     a.handle_callback("confirm:reset_all")
     assert a.finance.latest() == [] and a.debts.active() == []
+
+
+# ---------------------------------------------------------------- живые ошибки 24.09, 01:18
+
+def test_ai_invented_category_is_ignored(tmp_path):
+    """«Потратил 700» записалось как «продукты» — ИИ взял категорию из прошлого сообщения."""
+    a, llm = make(tmp_path)
+    say(a, llm, "Потратил 2500 на продукты", intent="CREATE_EXPENSE", amount_text="2500", category="продукты")
+    r = say(a, llm, "Потратил 700", intent="CREATE_EXPENSE", amount_text="700", category="продукты")
+    assert r.text == "🎩 Разумеется, Сэр! На что был расход?"
+    r = say(a, llm, "На такси", intent="ANSWER", answer="такси")
+    assert "700 ₽ — транспорт" in r.text
+
+
+def test_correction_picks_record_by_old_amount(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "x", intent="CREATE_EXPENSE", amount_text="2500", category="продукты")
+    say(a, llm, "y", intent="CREATE_EXPENSE", amount_text="700", category="продукты")
+    say(a, llm, "Потратил 900 на продукты", intent="CREATE_EXPENSE", amount_text="900", category="продукты")
+    r = say(a, llm, "Не 700 а 800", intent="UPDATE_FINANCE", target="продукты", new_amount_text="800")
+    assert not r.buttons and "800 ₽" in r.text
+    assert sorted(o.amount for o in a.finance.latest()) == [800, 900, 2500]
+
+
+@pytest.mark.parametrize("text,ai_amount,expected", [
+    ("Получил 120к", "120", "120 000 ₽"),       # ИИ «потерял» букву к
+    ("Потратил 5к на продукты", "5к", "5 000 ₽"),
+    ("Потратил 5 тр на продукты", "5", "5 000 ₽"),
+    ("Потратил 2 косаря на продукты", "2", "2 000 ₽"),
+    ("Потратил 1,5к на продукты", "1,5к", "1 500 ₽"),
+    ("Получил 1.2 млн", "1.2 млн", "1 200 000 ₽"),
+])
+def test_k_suffix_from_message(tmp_path, text, ai_amount, expected):
+    a, llm = make(tmp_path)
+    intent = "CREATE_INCOME" if text.startswith("Получил") else "CREATE_EXPENSE"
+    r = say(a, llm, text, intent=intent, amount_text=ai_amount, category="продукты" if "продукт" in text else None)
+    assert expected in r.text

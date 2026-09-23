@@ -13,6 +13,7 @@ from ..brain.dates import MONTHS, _norm, parse_date
 from ..brain.money import VAGUE, parse_amount, parse_conversion, parse_currency, parse_period
 from ..brain.parser import BrainResult
 from ..database.finance_repo import Operation, Person
+from ..services import search
 from ..services.currency import CurrencyService, Rates
 from ..services.finance import DebtService, FinanceService
 from ..ui import finance_texts as F
@@ -96,9 +97,10 @@ class FinanceMixin:
 
     def _money_in(self, amount_text: Optional[str], currency: Optional[str]) -> tuple | Reply | None:
         """(рубли, исходная сумма или None, валюта или None) — или Reply, если нет курса."""
-        amount = parse_amount(amount_text) if amount_text else None
-        if amount is None:
-            amount = parse_amount(self._message)
+        # Сумму берём из слов пользователя: ИИ может переписать «120к» как «120».
+        amount = parse_amount(self._message)
+        if amount is None and amount_text:
+            amount = parse_amount(amount_text)
         if amount is None:
             return None
         cur = (parse_currency(currency) or parse_currency(amount_text) or parse_currency(self._message) or "RUB")
@@ -110,6 +112,17 @@ class FinanceMixin:
         return rub, amount, cur
 
     # ------------------------------------------------------------ расходы и доходы
+    def _said_category(self, r: BrainResult) -> Optional[str]:
+        """Категория, только если она правда прозвучала: ИИ любит подставлять её «от себя»."""
+        heard = " ".join(filter(None, [self._message, (self._ctx().data or {}).get("answers")]))
+        from_words = F.match_category(self._message)
+        if from_words:
+            return from_words
+        for candidate in (r.category, r.description):
+            if candidate and search.score(candidate, heard) > 0:
+                return F.normalize_category(candidate)
+        return None
+
     def _create_op(self, r: BrainResult) -> Reply:
         op_type = "income" if r.intent == "CREATE_INCOME" else "expense"
         money = self._money_in(r.amount_text, r.currency)
@@ -118,12 +131,13 @@ class FinanceMixin:
         if money is None:
             return self._ask(r, "amount_text", "🎩 Разумеется, Сэр! Какая сумма?")
         rub, orig, cur = money
+        said = self._said_category(r)
         if op_type == "expense":
-            category = F.normalize_category(r.category, r.description) or F.match_category(self._message)
+            category = said
             if not category:
                 return self._ask(r, "category", "🎩 Разумеется, Сэр! На что был расход?")
         else:
-            category = F.normalize_category(r.category) if r.category else F.match_category(self._message)
+            category = said
         op = self.finance.add(op_type, rub, category, r.description, self._op_day(r), orig, cur)
         self._set_last("finance", op.id)
         amount = F.money(op.amount) + (f" ({F.money(orig, cur)})" if cur else "")
@@ -157,6 +171,23 @@ class FinanceMixin:
                 return [op]
         return self.finance.latest(op_type, 1)
 
+    def _narrow_ops(self, found: list[Operation]) -> list[Operation]:
+        """Несколько кандидатов: «не 700, а 800» → запись на 700; иначе — последняя упомянутая."""
+        if len(found) <= 1:
+            return found
+        m = re.search(r"\bне\s+(\d[\d\s]*(?:[.,]\d+)?\s*(?:к|k|тыс\w*|тр)?)", _norm(self._message or ""))
+        if m:
+            old = parse_amount(m.group(1))
+            same = [o for o in found if old is not None and abs(o.amount - old) < 0.01]
+            if same:
+                return same[:1]
+        ctx = self._ctx()
+        if ctx.entity_type == "finance" and ctx.entity_id:
+            last = [o for o in found if o.id == ctx.entity_id]
+            if last:
+                return last
+        return found
+
     def _ambiguous_ops(self, r: BrainResult, ops: list[Operation]) -> Reply:
         self._set_pending(r.intent, None, {"result": self._dump(r), "question": "выбор из списка",
                                            "choose": "finance"})
@@ -165,7 +196,7 @@ class FinanceMixin:
         return Reply("🎩 Сэр, уточните, пожалуйста, какую именно запись?", buttons=rows)
 
     def _update_finance(self, r: BrainResult, chosen: Optional[Operation] = None) -> Reply:
-        found = [chosen] if chosen else self._resolve_ops(r)
+        found = [chosen] if chosen else self._narrow_ops(self._resolve_ops(r))
         if not found:
             return Reply("🎩 Сэр, я не нашёл такую запись! Уточните, пожалуйста, какую именно нужно изменить?")
         if len(found) > 1:
