@@ -70,6 +70,20 @@ class TaskService:
             if not check or not check.completed:
                 raise VerificationError("task not completed")
 
+    def find_completed(self, query: str) -> list[Task]:
+        return search.best_matches(query, self.repo.recently_completed(self.user_id), lambda t: t.title)
+
+    def completed_on(self, day: date) -> list[Task]:
+        return [t for t in self.repo.recently_completed(self.user_id)
+                if t.completed_at and t.completed_at.startswith(day.isoformat())]
+
+    def restore(self, task: Task) -> Task:
+        self.repo.restore(self.user_id, task.id)
+        restored = self.repo.get(self.user_id, task.id)
+        if not restored or restored.completed:
+            raise VerificationError("task not restored")
+        return restored
+
     def delete(self, tasks: list[Task]) -> None:
         self.repo.delete(self.user_id, [t.id for t in tasks])
         for t in tasks:

@@ -5,7 +5,7 @@ from datetime import date, timedelta
 WEEKDAYS = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
 
 INTENTS = [
-    "CREATE_TASK", "UPDATE_TASK", "COMPLETE_TASK", "DELETE_TASK", "SHOW_TASKS",
+    "CREATE_TASK", "UPDATE_TASK", "COMPLETE_TASK", "RESTORE_TASK", "DELETE_TASK", "SHOW_TASKS",
     "CREATE_NOTE", "UPDATE_NOTE", "DELETE_NOTE", "SEARCH_NOTE", "SHOW_NOTES",
     "ANSWER", "CANCEL", "GREETING", "THANKS", "OTHER_SECTION", "UNKNOWN",
 ]
@@ -14,7 +14,7 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 Твоя единственная задача: разобрать сообщение пользователя и вернуть ОДИН JSON-объект. Никакого текста вокруг JSON.
 
 Поля JSON (лишние поля не добавляй, неизвестные ставь null):
-- "intent": одно из: CREATE_TASK, UPDATE_TASK, COMPLETE_TASK, DELETE_TASK, SHOW_TASKS, CREATE_NOTE, UPDATE_NOTE, DELETE_NOTE, SEARCH_NOTE, SHOW_NOTES, ANSWER, CANCEL, GREETING, THANKS, OTHER_SECTION, UNKNOWN
+- "intent": одно из: CREATE_TASK, UPDATE_TASK, COMPLETE_TASK, RESTORE_TASK, DELETE_TASK, SHOW_TASKS, CREATE_NOTE, UPDATE_NOTE, DELETE_NOTE, SEARCH_NOTE, SHOW_NOTES, ANSWER, CANCEL, GREETING, THANKS, OTHER_SECTION, UNKNOWN
 - "title": название нового дела, коротко, с большой буквы, БЕЗ слов о дате, глагол в неопределённой форме: «Подготовить отчёт», «Купить хлеб», «Позвонить маме» (а не «Подготовь отчёт») (строка или null)
 - "due_when": слова пользователя о дате дела, дословно, как он их написал: «завтра», «в пятницу», «15 октября», «через 3 дня» (строка или null). Сам дату НЕ вычисляй.
 - "target": как пользователь назвал существующее дело/заметку, которое нужно найти (строка или null). Если пользователь говорит «её», «его», «это», «последнее» и имеет в виду последний объект из контекста — пиши "LAST".
@@ -35,7 +35,8 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 - Заметки (notes) — информация для памяти: «запиши, что паспорт в верхнем ящике», идеи, мысли, факты.
 - Если пользователь просто пишет действие («Купить хлеб») — это CREATE_TASK.
 - «Отметь / вычеркни / сделал / выполнил» — COMPLETE_TASK. «Удали» — DELETE_TASK или DELETE_NOTE.
-- «Перенеси», «поменяй дату», «переименуй» — UPDATE_TASK.
+- «Перенеси», «поменяй дату», «переименуй» — UPDATE_TASK. В target — СТАРОЕ название дела, в new_title — новое.
+- «Верни дело», «я не сделал…», «зря вычеркнул», «отмени выполнение» — RESTORE_TASK (вернуть вычеркнутое дело в список).
 - «Что я записывал про…», «найди заметку» — SEARCH_NOTE.
 - Исправления вида «нет, на субботу», «не завтра, а в пятницу» относятся к последнему объекту: intent UPDATE_TASK, target "LAST".
 - Отрицания: «паспорт уже не нужен в заметке» — UPDATE_NOTE с replace_from, replace_to = "".

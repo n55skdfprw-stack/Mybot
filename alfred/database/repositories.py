@@ -124,6 +124,19 @@ class TaskRepository:
                 [(when_iso, tid, user_id) for tid in task_ids],
             )
 
+    def recently_completed(self, user_id: int, limit: int = 30) -> list[Task]:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM tasks WHERE user_id=? AND completed=1 ORDER BY completed_at DESC, id DESC LIMIT ?",
+                (user_id, limit),
+            ).fetchall()
+        return [_task(r) for r in rows]
+
+    def restore(self, user_id: int, task_id: int) -> None:
+        with self.db.connect() as conn:
+            conn.execute("UPDATE tasks SET completed=0, completed_at=NULL WHERE id=? AND user_id=?",
+                         (task_id, user_id))
+
     def delete(self, user_id: int, task_ids: list[int]) -> None:
         if not task_ids:
             return

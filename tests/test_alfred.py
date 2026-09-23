@@ -413,3 +413,44 @@ def test_wrong_ai_target_falls_back_to_message(tmp_path):
     llm.said(intent="COMPLETE_TASK", target="самолёт")
     run(a.handle_text("Позвонил маме, отметь"))
     assert [t.title for t in a.tasks.active()] == ["Купить хлеб"]
+
+
+def test_exact_milk_scenario_from_logs(tmp_path):
+    """Точная копия живой ошибки: переименование без названия задело молоко."""
+    a, llm, _ = make(tmp_path)
+    for title in ("Купить корм собаке", "Купить хлеб", "Подготовить отчет", "Купить молоко"):
+        llm.said(intent="CREATE_TASK", title=title)
+        run(a.handle_text(title))
+    llm.said(intent="UPDATE_TASK", target=None, new_title="Подготовьте отчет")
+    run(a.handle_text("Переименуй подготовить отчет в подготовьте отчет"))
+    llm.said(intent="COMPLETE_TASK", target=None)
+    run(a.handle_text("Сделал хлеб"))
+    titles = sorted(t.title for t in a.tasks.active())
+    assert titles == ["Купить корм собаке", "Купить молоко", "Подготовьте отчет"]
+
+
+def test_restore_task(tmp_path):
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_TASK", title="Купить молоко", due_when="в пятницу")
+    llm.said(intent="CREATE_TASK", title="Купить хлеб")
+    run(a.handle_text("x")); run(a.handle_text("y"))
+    llm.said(intent="COMPLETE_TASK", target="молоко")
+    run(a.handle_text("Сделал молоко"))
+    llm.said(intent="RESTORE_TASK", target="молоко")
+    r = run(a.handle_text("Верни молоко, я его не купил"))
+    style_ok(r.text)
+    milk = [t for t in a.tasks.active() if t.title == "Купить молоко"][0]
+    assert milk.due_date == date(2026, 9, 25)  # дата сохранилась
+
+
+def test_restore_when_already_in_list(tmp_path):
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_TASK", title="Купить молоко")
+    run(a.handle_text("x"))
+    llm.said(intent="COMPLETE_TASK", target="молоко")
+    run(a.handle_text("Сделал молоко"))
+    llm.said(intent="CREATE_TASK", title="Купить молоко")
+    run(a.handle_text("Купить молоко"))
+    llm.said(intent="RESTORE_TASK", target="молоко")
+    r = run(a.handle_text("Верни молоко"))
+    assert "уже есть" in r.text and len(a.tasks.active()) == 1

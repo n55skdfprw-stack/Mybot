@@ -165,6 +165,7 @@ class Alfred:
             "CREATE_TASK": self._create_task,
             "UPDATE_TASK": self._update_task,
             "COMPLETE_TASK": self._complete_task,
+            "RESTORE_TASK": self._restore_task,
             "DELETE_TASK": self._delete_task,
             "SHOW_TASKS": lambda _r: self.tasks_view(),
             "CREATE_NOTE": self._create_note,
@@ -279,6 +280,29 @@ class Alfred:
         self._set_last("task", None)
         return Reply(T.pick(f"🎩 Отлично, Сэр! «{task.title}» выполнено!",
                             f"🎩 Великолепно, Сэр! Вычеркнул «{task.title}»!"))
+
+    def _restore_task(self, r: BrainResult, chosen: Optional[Task] = None) -> Reply:
+        """Возвращает вычеркнутое дело в список (с прежней датой)."""
+        if chosen:
+            found = [chosen]
+        else:
+            found = []
+            if r.target and r.target != "LAST":
+                found = self.tasks.find_completed(r.target)
+            if not found and self._message:
+                found = self.tasks.find_completed(self._message)
+            if not found:
+                found = self.tasks.completed_on(self.today())
+        if not found:
+            return Reply("🎩 Сэр, я не нашёл такое дело среди вычеркнутых! Уточните, пожалуйста, какое вернуть?")
+        if len(found) > 1:
+            return self._ambiguous(r, "task", found)
+        task = found[0]
+        if any(search.normalize(t.title) == search.normalize(task.title) for t in self.tasks.active()):
+            return Reply(f"🎩 Сэр, дело «{T.short(task.title)}» уже есть в списке!")
+        restored = self.tasks.restore(task)
+        self._set_last("task", restored.id)
+        return Reply(f"🎩 Вернул, Сэр!\n\n{T.task_line(restored, self.today())}")
 
     def _delete_task(self, r: BrainResult, chosen: Optional[Task] = None) -> Reply:
         if r.scope == "all" and not chosen:
@@ -439,7 +463,7 @@ class Alfred:
                 if not task:
                     return Reply("🎩 Сэр, этого дела уже нет в списке!", edit=True)
                 action = {"UPDATE_TASK": self._update_task, "COMPLETE_TASK": self._complete_task,
-                          "DELETE_TASK": self._delete_task}[r.intent]
+                          "RESTORE_TASK": self._restore_task, "DELETE_TASK": self._delete_task}[r.intent]
                 return replace(action(r, chosen=task), edit=True)
             note = self.notes.get(obj_id)
             if not note:
