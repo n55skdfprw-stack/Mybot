@@ -530,3 +530,36 @@ def test_reset_all_needs_confirmation_and_wipes_everything(tmp_path):
     style_ok(r.text)
     assert not a.tasks.active() and not a.notes.all()
     assert a.schedule.between(date(2000, 1, 1), date(2100, 1, 1)) == [] and pending(a) == []
+
+
+def test_until_found_in_message_when_ai_missed(tmp_path):
+    """Живая ошибка 24.09, 00:36: «до конца октября» потерялось."""
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_EVENT", event_type="training", time_text="в 18:00",
+             repeat_text="каждый понедельник и четверг")  # ИИ не выделил until_text
+    r = run(a.handle_text("Тренировка каждый понедельник и четверг в 18:00 до конца октября"))
+    assert "до 31 октября" in r.text
+    assert max(e.date for e in a.schedule.between(TODAY, date(2027, 12, 31))) == date(2026, 10, 29)
+
+
+@pytest.mark.parametrize("phrase,last", [("по будням в 10 до 15 ноября", date(2026, 11, 13)),
+                                         ("по средам в 10 на ближайшие две недели", date(2026, 9, 30))])
+def test_until_variants_from_message(tmp_path, phrase, last):
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_EVENT", event_type="lecture", time_text="в 10",
+             repeat_text=phrase.split(" в ")[0])
+    run(a.handle_text("Лекция " + phrase))
+    assert max(e.date for e in a.schedule.between(TODAY, date(2027, 12, 31))) == last
+
+
+def test_delete_all_trainings_after_thursday_split(tmp_path):
+    a, llm, _ = make(tmp_path)
+    _create_series(a, llm)
+    llm.said(intent="UPDATE_EVENT", target="тренировка", event_type="training", event_when="по четвергам",
+             new_time_text="в 19", apply_to="series")
+    run(a.handle_text("Тренировки по четвергам теперь в 19"))
+    llm.said(intent="DELETE_EVENT", target="тренировка", event_type="training", apply_to="series")
+    r = run(a.handle_text("Удали все тренировки"))
+    assert r.text.endswith("?")
+    a.handle_callback(r.buttons[0][0][1])
+    assert a.schedule.between(TODAY, date(2027, 12, 31)) == []

@@ -546,6 +546,8 @@ class Alfred(ScheduleMixin):
             return self.schedule_day_view(d, edit=True)
 
         if kind == "confirm":
+            if parts[1] == "del_rules" and len(parts) == 3:
+                return self._confirm_delete_rules(parts[2])
             if parts[1] == "del_series" and len(parts) == 4:
                 return self._confirm_delete_series(int(parts[2]), parts[3])
             if parts[1] == "reset_all":

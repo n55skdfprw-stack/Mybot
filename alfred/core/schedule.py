@@ -20,6 +20,11 @@ from .reply import Reply
 
 log = logging.getLogger(__name__)
 
+UNTIL_RE = re.compile(
+    r"\bдо\s+конца\s+\w+|\bдо\s+\d{1,2}(?:[./]\d{1,2}(?:[./]\d{2,4})?|\s+[а-яё]+)"
+    r"|\bна\s+(?:ближайшие\s+|следующие\s+)?(?:\d+\s+|[а-яё]+\s+)?(?:недел\w*|месяц\w*)",
+    re.IGNORECASE,
+)
 REPEAT_WORDS = re.compile(r"кажд|\bпо\s+\w+(ам|ям)\b|будн|выходн|ежедн|еженед|ежемес", re.IGNORECASE)
 TYPE_WORDS = [("training", r"тренир"), ("lecture", r"лекци"), ("practice", r"практик|семинар|\bпар[аыу]\b"),
               ("doctor", r"врач|стоматолог|терапевт|при[её]м|клиник|анализ"), ("meeting", r"встреч")]
@@ -151,7 +156,11 @@ class ScheduleMixin:
             start_date = first or self.today()
             kind, days = parse_repeat(repeat_text, start_date)
             if kind:
-                end_date = parse_until(r.until_text, self.today())
+                until_text = r.until_text
+                if not until_text:
+                    m = UNTIL_RE.search(self._message or "")  # «до конца октября», если ИИ не выделил
+                    until_text = m.group(0) if m else None
+                end_date = parse_until(until_text, self.today())
                 rule_values = {**values, "kind": kind, "weekdays": ",".join(map(str, days)),
                                "month_day": start_date.day if kind == "monthly" else None,
                                "start_date": start_date.isoformat(),
@@ -331,6 +340,15 @@ class ScheduleMixin:
     # ------------------------------------------------------------ удаление
     def _delete_event(self, r: BrainResult, chosen: Optional[Event] = None) -> Reply:
         r = self._infer_series(r) if not chosen else r
+        if r.apply_to == "series" and not chosen and self._only_weekday(r) is None:
+            # «Удали все тренировки» — все расписания этого вида (после «по четвергам теперь…» их может быть два).
+            found = self._resolve_events(r)
+            etype = found[0].type if found else "other"
+            rule_ids = sorted({x.recurrence_id for x in found if x.recurrence_id})
+            if len(rule_ids) > 1:
+                return Reply(f"🎩 Сэр, вы действительно хотите удалить все будущие {S.TYPE_PLURAL[etype]}?",
+                             buttons=[[("🗑 Да, удалить", "confirm:del_rules:" + ",".join(map(str, rule_ids))),
+                                       ("↩️ Нет, оставить", "confirm:no")]])
         picked = chosen or self._pick_event(r, self._resolve_events(r))
         if isinstance(picked, Reply):
             return picked
@@ -348,6 +366,15 @@ class ScheduleMixin:
         self._set_last("event", None)
         return Reply(f"🎩 Удалил из распорядка, Сэр!\n\n❌ {S.day_title(e.date, self.today())} — "
                      f"{e.start_time} {S.label(e)}")
+
+    def _confirm_delete_rules(self, ids: str) -> Reply:
+        removed = 0
+        for rule_id in (int(x) for x in ids.split(",") if x.isdigit()):
+            rule = self.schedule.rule(rule_id)
+            if rule:
+                removed += len(self.schedule.delete_series(rule, self.now()))
+        self._set_last("event", None)
+        return Reply(f"🎩 Готово, Сэр! Удалил из распорядка: {removed}!", edit=True)
 
     def _confirm_delete_series(self, event_id: int, wd: str) -> Reply:
         e = self.schedule.get(event_id)
