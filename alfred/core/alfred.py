@@ -219,6 +219,15 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
             return await self.weather_view()
         if text in T.MENU_BUTTONS:
             return self.open_section(text)
+        renamed = self.try_rename(text)
+        if renamed:
+            return renamed
+        moved = await self.try_move_note(text)
+        if moved:
+            return moved
+        rate = await self.try_quick_rate(text)
+        if rate:
+            return rate
 
         ctx = self._ctx()
         pending_question = ctx.data.get("question") if ctx.intent else None

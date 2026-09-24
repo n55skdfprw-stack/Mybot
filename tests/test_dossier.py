@@ -141,3 +141,32 @@ def test_deleted_debts_and_birthdays_leave_no_ghosts(tmp_path):
     # Лёша без дня рождения остаётся — о нём есть сведения
     a.handle_callback("bd:del:" + str(a.birthdays.all(a.today())[0].id))
     assert [c.full_name for c in a.dossier.all()] == ["Анна", "Лёша"]
+
+
+# ---------------------------------------------------------------- 8.5: имя и перенос заметки
+
+def test_rename_after_birthday(tmp_path):
+    """Живая ошибка: «25 декабря др у Дани» записало «Дани», а «исправь имя на Даня» спросило дату."""
+    a, llm = make(tmp_path)
+    say(a, llm, "25 декабря др у Дани", intent="CREATE_BIRTHDAY", person="Дани", bday_text="25 декабря")
+    r = run(a.handle_text("исправь имя на Даня"))            # без ИИ
+    style_ok(r.text)
+    assert r.text.startswith("🎩 Готово, Сэр! Исправил имя!\n\n👤 Дани → Даня\n🎂 Даня — 25 декабря")
+    assert a._name(a.birthdays.all(a.today())[0].person_id) == "Даня"
+
+
+def test_rename_by_name(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "x", intent="CREATE_PERSON", person="Серега")
+    r = run(a.handle_text("Переименуй Серега в Сергей Афанасьев"))
+    assert "👤 Серега → Сергей Афанасьев" in r.text
+
+
+def test_move_note_to_dossier(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "Вася Пупкин должник, так и запиши", intent="CREATE_NOTE", content="Вася Пупкин — должник")
+    llm.said(intent="UPDATE_PERSON", person="Вася Пупкин", dossier={"facts": "должник"})
+    r = run(a.handle_text("удали из заметок и напиши в досье"))
+    assert r.text.startswith("🎩 Готово, Сэр! Перенёс заметку в досье.\n\n👤 Вася Пупкин")
+    assert a.notes.all() == []
+    assert a.dossier.all()[0].important_facts == "Должник"

@@ -1,5 +1,6 @@
 """Раздел «🗂️ Досье»: карточки людей. Долги и дни рождения — те же люди, в карточке они видны."""
 
+import re
 from dataclasses import replace
 from typing import Optional
 
@@ -11,6 +12,16 @@ from ..ui import birthday_texts as B
 from ..ui import dossier_texts as DT
 from ..ui import finance_texts as F
 from .reply import Reply
+
+NAME_WORD = r"([А-ЯЁA-Zа-яёa-z][а-яёa-z\-]+(?:\s+[А-ЯЁA-Z][а-яёa-z\-]+)?)"
+RENAME_RES = [
+    re.compile(rf"переименуй\s+{NAME_WORD}\s+в\s+{NAME_WORD}", re.I),                        # кого → как
+    re.compile(rf"(?:исправь|измени|поменяй)\s+имя\s+(?:на\s+){NAME_WORD}", re.I),           # последний
+    re.compile(rf"(?:правильно|правильное имя|его зовут|её зовут|ее зовут)\s*[:—-]?\s*{NAME_WORD}\s*$", re.I),
+    re.compile(rf"имя\s+не\s+\S+,?\s+а\s+{NAME_WORD}", re.I),
+]
+MOVE_NOTE_RE = re.compile(r"(?:из\s+замет\w*|заметк\w*).*(?:в\s+досье)|(?:в\s+досье).*(?:из\s+замет\w*|заметк\w*)",
+                          re.I)
 
 DOS_INTENTS = {"CREATE_PERSON", "UPDATE_PERSON", "DELETE_PERSON", "SHOW_PERSON", "SEARCH_PEOPLE"}
 LIST_LIMIT = 10
@@ -58,6 +69,86 @@ class DossierMixin:
 
     def _card_of(self, chosen) -> Optional[Card]:
         return self.dossier.get(chosen.id) if chosen is not None else None
+
+    # ------------------------------------------------------------ без ИИ: переименовать, перенести заметку
+    def _last_person_id(self) -> Optional[int]:
+        """О ком говорили последним: досье, день рождения или долг."""
+        ctx = self._ctx()
+        if not ctx.entity_id:
+            return None
+        if ctx.entity_type == "person":
+            return ctx.entity_id
+        if ctx.entity_type == "birthday":
+            b = self.birthdays.get(ctx.entity_id)
+            return b.person_id if b else None
+        if ctx.entity_type == "debt":
+            d = self.debts.by_id(ctx.entity_id)
+            return d.person_id if d else None
+        return None
+
+    def try_rename(self, text: str) -> Optional[Reply]:
+        """«Исправь имя на Даня», «Переименуй Дани в Даня», «Имя не Дани, а Даня»."""
+        for i, rx in enumerate(RENAME_RES):
+            m = rx.search(text.strip().rstrip("!."))
+            if not m:
+                continue
+            if i == 0:
+                found = self.debts.find_people(m.group(1))
+                if len(found) != 1:
+                    return None          # это не человек (например, «Переименуй дело …») — пусть разбирается ИИ
+                pid, new = found[0].id, m.group(2)
+            else:
+                pid, new = self._last_person_id(), m.group(1)
+                if not pid:
+                    return Reply("🎩 Сэр, чьё имя исправить? Напишите, например: «Переименуй Дани в Даня».")
+            card = self.dossier.get(pid)
+            if not card:
+                return None
+            old = card.full_name
+            parts = new.split()
+            changes = {"first_name": parts[0]}
+            if len(parts) > 1:
+                changes["last_name"] = parts[1]
+            card, _ = self.dossier.apply(card, changes)
+            self._set_last("person", card.id)
+            extra = []
+            b = self.birthdays.of(card.id)
+            if b:
+                extra.append(B.line(card.full_name, b, self.today()))
+            return Reply(f"🎩 Готово, Сэр! Исправил имя!\n\n👤 {old} → {card.full_name}"
+                         + ("\n" + "\n".join(extra) if extra else ""))
+        return None
+
+    async def try_move_note(self, text: str) -> Optional[Reply]:
+        """«Удали из заметок и запиши в досье» — переносим последнюю заметку в досье."""
+        if not MOVE_NOTE_RE.search(text):
+            return None
+        ctx = self._ctx()
+        note = self.notes.get(ctx.entity_id) if ctx.entity_type == "note" and ctx.entity_id else None
+        if note is None:
+            notes = self.notes.all()
+            note = notes[-1] if notes else None
+        if note is None:
+            return Reply("🎩 Сэр, заметок нет — переносить нечего! Напишите сразу, например: "
+                         "«Запиши в досье Васи: …».")
+        if self.quota:
+            refusal = self.quota()
+            if refusal:
+                return Reply(refusal)
+        try:
+            r = await self.brain.analyze(text=f"Запиши в досье: {note.content}", today=self.today(),
+                                         last_object=None, pending=None, task_titles=[], note_titles=[])
+        except Exception:
+            return Reply("🎩 Прошу прощения, Сэр! Не удалось разобрать заметку — попробуйте чуть позже.")
+        if r.intent not in ("UPDATE_PERSON", "CREATE_PERSON") or not r.person:
+            return Reply(f"🎩 Сэр, не понял, о ком эта заметка. Напишите так: «Запиши в досье Васи: {note.content}».")
+        if not r.dossier:
+            r = replace(r, dossier={"facts": note.content})
+        self._message = self._raw_text = note.content
+        reply = self._update_person(replace(r, intent="UPDATE_PERSON"), create=True)
+        self.notes.delete([note])
+        body = reply.text.split("\n\n", 1)[1] if "\n\n" in reply.text else ""
+        return Reply(f"🎩 Готово, Сэр! Перенёс заметку в досье.\n\n{body}")
 
     # ------------------------------------------------------------ защита от ошибок ИИ
     def _guard_dossier(self, r: BrainResult, text: str) -> BrainResult:

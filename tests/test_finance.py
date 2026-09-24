@@ -24,6 +24,8 @@ CBR = {"Date": "2026-09-24T11:30:00+03:00", "Valute": {
     "EUR": {"Nominal": 1, "Value": 90.12, "Previous": 90.27},
     "CNY": {"Nominal": 1, "Value": 11.38, "Previous": 11.36},
     "KZT": {"Nominal": 100, "Value": 16.5, "Previous": 16.4},
+    "TRY": {"Nominal": 10, "Value": 20.5, "Previous": 20.4},
+    "KRW": {"Nominal": 1000, "Value": 61.2, "Previous": 61.0},
 }}
 
 
@@ -477,3 +479,28 @@ def test_group_shows_transport_kind(tmp_path):
     lines = [l for l in r.text.split("\n") if l.startswith("🕐")]
     assert lines[0].endswith("−1 000 ₽ БСК") and lines[1].endswith("−85 ₽ Автобус") and lines[2].endswith("−86 ₽ Метро")
     assert r.buttons[1][0][0].endswith("85 ₽ Автобус")
+
+
+# ---------------------------------------------------------------- 8.6: курс любой валюты
+
+def test_quick_rate_one_word(tmp_path):
+    """Живая ошибка: на «лира» Альфред ответил «раздел обустраиваю»."""
+    a, llm = make(tmp_path)
+    r = run(a.handle_text("лира"))                       # без ИИ
+    style_ok(r.text)
+    assert r.text == ("🎩 Курс ЦБ на 24 сентября, Сэр!\n\n🇹🇷 Лира — 2,05 ₽ (▲ 0,01)\n\n"
+                      "💱 Пересчитать можно так: «100 TRY в рублях».")
+    r = run(a.handle_text("Курс вона?"))
+    assert "🇰🇷 Вона — за 100: 6,12 ₽" in r.text          # мелкая валюта — за 10/100/1000
+    r = run(a.handle_text("Сколько стоит тенге"))
+    assert "🇰🇿 Тенге — за 10: 1,65 ₽" in r.text
+    r = run(a.handle_text("курс злотого"))
+    assert r.text.startswith("🎩 Сэр, курса этой валюты у ЦБ нет!")
+
+
+def test_currency_words_do_not_steal_normal_text():
+    from alfred.brain.money import parse_currency as p
+    assert p("Лев должен мне 500") is None                # имя, а не болгарский лев
+    assert p("купил батон за 50") is None and p("сумма 300") is None
+    assert p("индонезийская рупия") == "IDR" and p("египетский фунт") == "EGP"
+    assert p("канадский доллар") == "CAD" and p("сомони") == "TJS" and p("100 сомов") == "KGS"

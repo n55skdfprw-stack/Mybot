@@ -33,7 +33,16 @@ RATE_INTENTS = {"SHOW_CURRENCY_RATES", "CONVERT_CURRENCY"}
 OP_INTENTS = {"CREATE_EXPENSE", "CREATE_INCOME", "UPDATE_FINANCE"}
 FLAGS = {"USD": "🇺🇸 Доллар", "EUR": "🇪🇺 Евро", "CNY": "🇨🇳 Юань", "GBP": "🇬🇧 Фунт", "TRY": "🇹🇷 Лира",
          "KZT": "🇰🇿 Тенге", "BYN": "🇧🇾 Белорусский рубль", "AED": "🇦🇪 Дирхам", "JPY": "🇯🇵 Иена",
-         "CHF": "🇨🇭 Франк"}
+         "CHF": "🇨🇭 Франк", "AMD": "🇦🇲 Армянский драм", "KRW": "🇰🇷 Вона", "PLN": "🇵🇱 Злотый",
+         "THB": "🇹🇭 Бат", "INR": "🇮🇳 Индийская рупия", "IDR": "🇮🇩 Индонезийская рупия", "GEL": "🇬🇪 Лари",
+         "KGS": "🇰🇬 Сом", "TJS": "🇹🇯 Сомони", "UZS": "🇺🇿 Сум", "UAH": "🇺🇦 Гривна", "AZN": "🇦🇿 Манат",
+         "TMT": "🇹🇲 Туркменский манат", "MDL": "🇲🇩 Молдавский лей", "RON": "🇷🇴 Румынский лей",
+         "BGN": "🇧🇬 Болгарский лев", "HUF": "🇭🇺 Форинт", "CZK": "🇨🇿 Чешская крона", "SEK": "🇸🇪 Шведская крона",
+         "NOK": "🇳🇴 Норвежская крона", "DKK": "🇩🇰 Датская крона", "HKD": "🇭🇰 Гонконгский доллар",
+         "SGD": "🇸🇬 Сингапурский доллар", "CAD": "🇨🇦 Канадский доллар", "AUD": "🇦🇺 Австралийский доллар",
+         "NZD": "🇳🇿 Новозеландский доллар", "BRL": "🇧🇷 Бразильский реал", "ZAR": "🇿🇦 Рэнд",
+         "EGP": "🇪🇬 Египетский фунт", "QAR": "🇶🇦 Катарский риал", "VND": "🇻🇳 Донг", "RSD": "🇷🇸 Сербский динар"}
+RATE_WORDS = re.compile(r"\b(курс\w*|какой|какая|сколько|стоит|сейчас|сегодня|цб|по|у|на|к|рублю|рублям)\b")
 PURCHASE_RE = re.compile(r"\b(потратил\w*|купил\w*|заплатил\w*|оплатил\w*|отдал\w*\s+за)\b", re.IGNORECASE)
 TOPUP_RE = re.compile(r"\bпополн\w*", re.IGNORECASE)
 # На эти вопросы Альфреда короткий ответ — это всегда ответ, а не новая команда.
@@ -595,16 +604,40 @@ class FinanceMixin:
         codes = ["USD", "EUR", "CNY"]
         if only and only not in codes and only in rates.rub_per_unit:
             codes.append(only)
-        lines = []
-        for code in codes:
-            v, prev = rates.rub_per_unit.get(code), rates.prev_rub_per_unit.get(code)
-            if v is None:
-                continue
-            delta = round(v - prev, 2) if prev else 0
-            arrow = "▲" if delta > 0 else "▼" if delta < 0 else "="
-            lines.append(f"{FLAGS.get(code, code)} — {v:.2f} ₽ ({arrow} {abs(delta):.2f})".replace(".", ","))
+        lines = [x for x in (self._rate_line(code, rates) for code in codes) if x]
         head = f"🎩 Курсы ЦБ на {_day_short(rates.day)}, Сэр!"
         return Reply(head + "\n\n" + "\n".join(lines), buttons=FIN_BUTTONS, edit=edit)
+
+    @staticmethod
+    def _rate_line(code: str, rates) -> Optional[str]:
+        v, prev = rates.rub_per_unit.get(code), rates.prev_rub_per_unit.get(code)
+        if v is None:
+            return None
+        per = 1
+        while v * per < 1 and per < 10000:          # вона, сум, донг: считаем за 100 / 1000 / 10000
+            per *= 10
+        delta = round((v - prev) * per, 2) if prev else 0
+        arrow = "▲" if delta > 0 else "▼" if delta < 0 else "="
+        unit = f"за {per}: " if per > 1 else ""
+        return f"{FLAGS.get(code, code)} — {unit}{v * per:.2f} ₽ ({arrow} {abs(delta):.2f})".replace(".", ",")
+
+    async def try_quick_rate(self, text: str) -> Optional[Reply]:
+        """«лира», «курс лиры», «сколько стоит тенге?» — сразу курс ЦБ, без ИИ."""
+        t = _norm(text).strip(" ?!.")
+        if re.search(r"\d", t):
+            return None
+        rest = RATE_WORDS.sub(" ", t).split()
+        code = parse_currency(" ".join(rest)) if rest else None
+        if not code or code == "RUB" or len(rest) > 3:
+            return None
+        self._rates = await self.currency.get()
+        if not self._rates:
+            return Reply(T.AI_UNAVAILABLE, buttons=FIN_BUTTONS)
+        line = self._rate_line(code, self._rates)
+        if not line:
+            return Reply("🎩 Сэр, курса этой валюты у ЦБ нет!", buttons=FIN_BUTTONS)
+        return Reply(f"🎩 Курс ЦБ на {_day_short(self._rates.day)}, Сэр!\n\n{line}\n\n"
+                     f"💱 Пересчитать можно так: «100 {code} в рублях».", buttons=FIN_BUTTONS)
 
     def _show_rates(self, r: BrainResult) -> Reply:
         return self.rates_view(parse_currency(r.currency) or parse_currency(self._message))

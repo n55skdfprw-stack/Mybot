@@ -26,6 +26,39 @@ CURRENCIES = {
     "AED": (r"дирхам\w*|aed", "AED"),
     "JPY": (r"иен\w*|йен\w*|jpy", "JPY"),
     "CHF": (r"франк\w*|chf", "CHF"),
+    # Остальные валюты ЦБ. Где слово многозначное («лев», «крона», «бат») — только вместе со страной.
+    "AMD": (r"драм\w*|армянск\w*|amd", "AMD"),
+    "KRW": (r"вон(?:а|ы|ов)?\b|(?:южно)?корейск\w*|krw", "KRW"),
+    "PLN": (r"злот\w*|польск\w*|pln", "PLN"),
+    "THB": (r"бат(?:а|ы|ов)?\b|тайск\w*|thb", "THB"),
+    "INR": (r"рупи\w*|индийск\w*|inr", "INR"),
+    "IDR": (r"индонез\w*|idr", "IDR"),
+    "GEL": (r"лари\b|грузинск\w*|gel", "GEL"),
+    "KGS": (r"сом(?:а|ы|ов)?\b|киргизск\w*|кыргызск\w*|kgs", "KGS"),
+    "TJS": (r"сомони|таджикск\w*|tjs", "TJS"),
+    "UZS": (r"сум(?:а|ы|ов)?\b|узбекск\w*|uzs", "UZS"),
+    "UAH": (r"гривн\w*|украинск\w*|uah", "UAH"),
+    "AZN": (r"азербайджанск\w*|манат\w*|azn", "AZN"),
+    "TMT": (r"туркменск\w*|tmt", "TMT"),
+    "MDL": (r"молдавск\w*|mdl", "MDL"),
+    "RON": (r"румынск\w*|ron", "RON"),
+    "BGN": (r"болгарск\w*|bgn", "BGN"),
+    "HUF": (r"форинт\w*|венгерск\w*|huf", "HUF"),
+    "CZK": (r"чешск\w*|czk", "CZK"),
+    "SEK": (r"шведск\w*|sek", "SEK"),
+    "NOK": (r"норвежск\w*|nok", "NOK"),
+    "DKK": (r"датск\w*|dkk", "DKK"),
+    "HKD": (r"гонконгск\w*|hkd", "HKD"),
+    "SGD": (r"сингапурск\w*|sgd", "SGD"),
+    "CAD": (r"канадск\w*|cad", "CAD"),
+    "AUD": (r"австралийск\w*|aud", "AUD"),
+    "NZD": (r"новозеландск\w*|nzd", "NZD"),
+    "BRL": (r"реал(?:а|ы|ов)?\b|бразильск\w*|brl", "BRL"),
+    "ZAR": (r"рэнд\w*|ранд\w*|южноафриканск\w*|zar", "ZAR"),
+    "EGP": (r"египетск\w*|egp", "EGP"),
+    "QAR": (r"риал\w*|катарск\w*|qar", "QAR"),
+    "VND": (r"донг\w*|вьетнамск\w*|vnd", "VND"),
+    "RSD": (r"динар\w*|сербск\w*|rsd", "RSD"),
 }
 SYMBOL = {code: sym for code, (_, sym) in CURRENCIES.items()}
 
@@ -88,8 +121,14 @@ def parse_currency(text: Optional[str]) -> Optional[str]:
             found.append((m.start(), code))
     if not found:
         return None
-    if len({c for _, c in found}) > 1 and "BYN" in {c for _, c in found}:
+    codes = {c for _, c in found}
+    if len(codes) > 1 and "BYN" in codes:
         return "BYN"
+    # «Индонезийская рупия», «египетский фунт», «канадский доллар»: страна важнее общего слова
+    for specific, general in (("IDR", "INR"), ("EGP", "GBP"), ("CAD", "USD"), ("AUD", "USD"), ("NZD", "USD"),
+                              ("HKD", "USD"), ("SGD", "USD"), ("TJS", "KGS")):
+        if specific in codes and general in codes:
+            return specific
     return sorted(found)[0][1]
 
 
