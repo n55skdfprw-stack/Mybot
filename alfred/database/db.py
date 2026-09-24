@@ -8,7 +8,7 @@ from typing import Iterator
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -148,6 +148,18 @@ CREATE TABLE IF NOT EXISTS debts (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS birthdays (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    person_id INTEGER NOT NULL REFERENCES people(id),
+    day INTEGER NOT NULL,
+    month INTEGER NOT NULL,
+    year INTEGER,                    -- год рождения, если известен
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (user_id, person_id)
+);
+
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 """
 
@@ -177,7 +189,7 @@ class Database:
         """Полная очистка данных пользователя (сам пользователь остаётся). Одна транзакция."""
         with self.connect() as conn:
             for table in ("notifications", "events", "recurrences", "tasks", "notes", "conversation_context",
-                          "debts", "financial_operations", "people"):
+                          "debts", "financial_operations", "birthdays", "people"):
                 conn.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
 
     def migrate(self) -> None:

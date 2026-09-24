@@ -28,6 +28,9 @@ from ..services.currency import CurrencyService
 from ..services.finance import DebtService, FinanceService
 from ..ui import finance_texts as F
 from .finance import FinanceMixin
+from .birthdays import BirthdayMixin
+from ..database.birthday_repo import BirthdayRepository
+from ..services.birthdays import BirthdayService
 from .schedule import SCHEDULE_BUTTONS, ScheduleMixin, infer_type
 
 log = logging.getLogger(__name__)
@@ -44,12 +47,12 @@ RESTORE_RE = re.compile(
 )
 
 
-class Alfred(ScheduleMixin, FinanceMixin):
+class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin):
     def __init__(self, brain: Brain, tasks: TaskService, notes: NoteService, schedule: ScheduleService,
                  context: ContextRepository, user_id: int, tz: ZoneInfo,
                  clock: Optional[Callable[[], datetime]] = None, *,
                  finance: Optional[FinanceService] = None, debts: Optional[DebtService] = None,
-                 currency: Optional[CurrencyService] = None):
+                 currency: Optional[CurrencyService] = None, birthdays: Optional[BirthdayService] = None):
         self.brain = brain
         self.tasks = tasks
         self.notes = notes
@@ -58,6 +61,7 @@ class Alfred(ScheduleMixin, FinanceMixin):
         self.finance = finance or FinanceService(OperationRepository(db), user_id)
         self.debts = debts or DebtService(DebtRepository(db), PeopleRepository(db), user_id)
         self.currency = currency or CurrencyService()
+        self.birthdays = birthdays or BirthdayService(BirthdayRepository(db), user_id)
         self._rates = None
         self.context = context
         self.user_id = user_id
@@ -113,6 +117,10 @@ class Alfred(ScheduleMixin, FinanceMixin):
             op = self.finance.get(ctx.entity_id)
             if op:
                 return f"финансовая запись: {F.op_line(op)}"
+        if ctx.entity_type == "birthday" and ctx.entity_id:
+            b = self.birthdays.get(ctx.entity_id)
+            if b:
+                return f"день рождения: {self._name(b.person_id)} — {b.day} {T.MONTHS_GEN[b.month - 1]}"
         if ctx.entity_type == "debt" and ctx.entity_id:
             d = self.debts.by_id(ctx.entity_id)
             p = self.debts.person(d.person_id) if d else None
@@ -161,6 +169,8 @@ class Alfred(ScheduleMixin, FinanceMixin):
             return self.schedule_day_view(self.today())
         if button == T.MENU_FINANCE:
             return self.statistics_view()
+        if button == T.MENU_BIRTHDAYS:
+            return self.birthdays_view()
         return Reply(T.SECTION_NOT_READY)
 
     async def handle_text(self, text: str) -> Reply:
@@ -189,6 +199,7 @@ class Alfred(ScheduleMixin, FinanceMixin):
         result = self._guard_event_vs_note(result, text)
         result = self._guard_short_answer(result, text, ctx)
         result = self._guard_finance(result, text)
+        result = self._guard_birthday(result, text)
         await self._prefetch_rates(result)
         try:
             return self._execute(result, ctx)
@@ -274,7 +285,12 @@ class Alfred(ScheduleMixin, FinanceMixin):
             "CANCEL": lambda _r: Reply(T.CANCELLED if ctx.intent else T.NOTHING_TO_CANCEL),
             "GREETING": lambda _r: Reply(T.greeting(self.now())),
             "THANKS": lambda _r: Reply(T.pick(*T.THANKS)),
-            "OTHER_SECTION": lambda _r: Reply(T.SECTION_NOT_READY),
+            "OTHER_SECTION": lambda r: self.birthdays_view() if r.section == "birthdays"
+            else Reply(T.SECTION_NOT_READY),
+            "CREATE_BIRTHDAY": self._create_birthday,
+            "UPDATE_BIRTHDAY": self._update_birthday,
+            "DELETE_BIRTHDAY": self._delete_birthday,
+            "SHOW_BIRTHDAYS": self._show_birthdays,
         }
         handler = handlers.get(r.intent)
         return handler(r) if handler else Reply(T.NOT_UNDERSTOOD)
@@ -612,8 +628,22 @@ class Alfred(ScheduleMixin, FinanceMixin):
                 if not person:
                     return Reply("🎩 Сэр, этого человека уже нет!", edit=True)
                 action = {"CREATE_DEBT": self._create_debt, "REPAY_DEBT": self._repay_debt,
-                          "DELETE_DEBT": self._delete_debt}[r.intent]
+                          "DELETE_DEBT": self._delete_debt, "UPDATE_DEBT": None,
+                          "CREATE_BIRTHDAY": self._create_birthday, "UPDATE_BIRTHDAY": self._update_birthday,
+                          "DELETE_BIRTHDAY": self._delete_birthday,
+                          "SHOW_BIRTHDAYS": self._show_birthdays}.get(r.intent)
+                if not action:
+                    return Reply(T.CANCELLED, edit=True)
                 return replace(action(r, chosen=person), edit=True)
+            if ctx.data["choose"] == "birthday":
+                b = self.birthdays.get(obj_id)
+                if not b:
+                    return Reply("🎩 Сэр, этого дня рождения уже нет!", edit=True)
+                action = {"UPDATE_BIRTHDAY": self._update_birthday,
+                          "DELETE_BIRTHDAY": self._delete_birthday}.get(r.intent)
+                if not action:
+                    return Reply(T.CANCELLED, edit=True)
+                return replace(action(r, chosen=b), edit=True)
             if ctx.data["choose"] == "event":
                 event = self.schedule.get(obj_id)
                 if not event:
@@ -635,6 +665,9 @@ class Alfred(ScheduleMixin, FinanceMixin):
 
         if kind == "fin":
             return self.finance_callback(parts)
+
+        if kind == "bd":
+            return self.birthday_callback(parts)
 
         if kind == "sched":
             if parts[1] == "week":

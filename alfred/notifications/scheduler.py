@@ -2,6 +2,7 @@
 
 - 10:00, 14:00, 18:00 — проверки дел (утренняя пропускается, если сводка пришла с напоминанием о лекции);
 - каждую минуту — напоминания о событиях распорядка;
+- 12:00 — дни рождения (сегодня, завтра и через неделю — одним сообщением);
 - 19:00 — расписание на завтра;
 - 03:00 — продление повторяющихся событий.
 
@@ -50,6 +51,14 @@ def build_scheduler(bot: Bot, alfred: Alfred, owner_id: int) -> AsyncIOScheduler
         except Exception:
             log.exception("Tomorrow summary failed")
 
+    async def run_birthdays():
+        try:
+            reply = alfred.birthday_reminder()
+            if reply:
+                await send_reply(bot, owner_id, reply)
+        except Exception:
+            log.exception("Birthdays reminder failed")
+
     async def run_extend():
         try:
             alfred.extend_schedule()
@@ -59,6 +68,7 @@ def build_scheduler(bot: Bot, alfred: Alfred, owner_id: int) -> AsyncIOScheduler
     for period, hour in CHECKS.items():
         scheduler.add_job(run_check, "cron", hour=hour, minute=0, args=[period], id=f"check_{period}", **common)
     scheduler.add_job(run_reminders, "interval", seconds=60, id="reminders", **common)
+    scheduler.add_job(run_birthdays, "cron", hour=12, minute=0, id="birthdays", **common)
     scheduler.add_job(run_tomorrow, "cron", hour=19, minute=0, id="tomorrow", **common)
     scheduler.add_job(run_extend, "cron", hour=3, minute=0, id="extend", **common)
     return scheduler

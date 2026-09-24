@@ -37,7 +37,7 @@ FLAGS = {"USD": "🇺🇸 Доллар", "EUR": "🇪🇺 Евро", "CNY": "�
 PURCHASE_RE = re.compile(r"\b(потратил\w*|купил\w*|заплатил\w*|оплатил\w*|отдал\w*\s+за)\b", re.IGNORECASE)
 TOPUP_RE = re.compile(r"\bпополн\w*", re.IGNORECASE)
 # На эти вопросы Альфреда короткий ответ — это всегда ответ, а не новая команда.
-SHORT_ANSWER_PARAMS = {"category", "person", "amount_text", "new_amount_text"}
+SHORT_ANSWER_PARAMS = {"category", "person", "amount_text", "new_amount_text", "bday_text"}
 
 
 def _day_short(d: date) -> str:
@@ -114,6 +114,10 @@ class FinanceMixin:
             return r
         if ctx.missing_parameter in ("amount_text", "new_amount_text") and not parse_amount(text):
             return r
+        if ctx.missing_parameter == "bday_text":
+            from ..services.birthdays import parse_birthday
+            if not parse_birthday(text, self.today()):
+                return r
         log.info("Guard: %s -> ANSWER (%s)", r.intent, ctx.missing_parameter)
         return replace(r, intent="ANSWER", answer=text.strip(" .!"))
 

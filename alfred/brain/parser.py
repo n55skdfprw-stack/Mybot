@@ -58,6 +58,7 @@ class BrainResult:
     person: Optional[str] = None
     direction: Optional[str] = None
     convert_to: Optional[str] = None
+    bday_text: Optional[str] = None
 
 
 class ParseError(Exception):
@@ -157,4 +158,5 @@ def parse(raw: str) -> BrainResult:
         person=_str(data.get("person")),
         direction=data.get("direction") if data.get("direction") in ("owes_me", "i_owe") else None,
         convert_to=_str(data.get("convert_to")),
+        bday_text=_str(data.get("bday_text")),
     )
