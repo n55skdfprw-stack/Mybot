@@ -83,6 +83,8 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
         self._clock = clock
         self._message = ""
         self._raw_text = ""
+        # Лимит запросов к ИИ для приглашённых: функция вернёт текст отказа, если лимит исчерпан.
+        self.quota: Optional[Callable[[], Optional[str]]] = None
 
     # ------------------------------------------------------------------ время
     def now(self) -> datetime:
@@ -220,6 +222,10 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
 
         ctx = self._ctx()
         pending_question = ctx.data.get("question") if ctx.intent else None
+        if self.quota:
+            refusal = self.quota()
+            if refusal:
+                return Reply(refusal)
         try:
             result = await self.brain.analyze(
                 text=text,

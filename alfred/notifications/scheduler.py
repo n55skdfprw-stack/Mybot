@@ -7,6 +7,8 @@
 - 19:00 — расписание на завтра;
 - 03:00 — продление повторяющихся событий.
 
+Всё это — для каждого, кому служит Альфред (владелец и приглашённые), у каждого — своё.
+
 Если бот был выключен, пропущенные сообщения потом не присылаются.
 """
 
@@ -15,7 +17,7 @@ import logging
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from ..core.alfred import Alfred
+from ..core.access import Access
 from ..handlers.telegram import send_reply
 
 log = logging.getLogger(__name__)
@@ -23,56 +25,61 @@ log = logging.getLogger(__name__)
 CHECKS = {"morning": 10, "day": 14, "evening": 18}
 
 
-def build_scheduler(bot: Bot, alfred: Alfred, owner_id: int) -> AsyncIOScheduler:
-    scheduler = AsyncIOScheduler(timezone=alfred.tz)
+def build_scheduler(bot: Bot, access: Access) -> AsyncIOScheduler:
+    scheduler = AsyncIOScheduler(timezone=access.tz)
     common = {"misfire_grace_time": 300, "coalesce": True, "replace_existing": True}
 
+    async def each(name: str, job):
+        """Выполнить задачу для каждого пользователя. Ошибка у одного не мешает остальным."""
+        for acc, alfred in access.active():
+            try:
+                await job(acc, alfred)
+            except Exception:
+                log.exception("%s failed for user %s", name, acc.id)
+
+    def send(acc, reply):
+        return send_reply(bot, acc.telegram_id, reply, owner=acc.role == "owner", address=acc.address)
+
     async def run_check(period: str):
-        try:
+        async def job(acc, alfred):
             weather = await alfred.morning_weather() if period == "morning" else None
             reply = alfred.check_message(period, weather=weather)
             if reply:
-                await send_reply(bot, owner_id, reply)
-        except Exception:
-            log.exception("Check %s failed", period)
+                await send(acc, reply)
+        await each(f"check {period}", job)
 
     async def run_reminders():
-        try:
+        async def job(acc, alfred):
             for notif_id, reply in alfred.collect_reminders():
                 if reply is None:
                     alfred.mark_reminder(notif_id, sent=False)
                     continue
-                await send_reply(bot, owner_id, reply)
+                await send(acc, reply)
                 alfred.mark_reminder(notif_id, sent=True)
-        except Exception:
-            log.exception("Reminders failed")
+        await each("reminders", job)
 
     async def run_med():
-        try:
+        async def job(acc, alfred):
             for reply in alfred.collect_med_reminders():
-                await send_reply(bot, owner_id, reply)
-        except Exception:
-            log.exception("Med reminders failed")
+                await send(acc, reply)
+        await each("med reminders", job)
 
     async def run_tomorrow():
-        try:
-            await send_reply(bot, owner_id, alfred.tomorrow_summary())
-        except Exception:
-            log.exception("Tomorrow summary failed")
+        async def job(acc, alfred):
+            await send(acc, alfred.tomorrow_summary())
+        await each("tomorrow summary", job)
 
     async def run_birthdays():
-        try:
+        async def job(acc, alfred):
             reply = alfred.birthday_reminder()
             if reply:
-                await send_reply(bot, owner_id, reply)
-        except Exception:
-            log.exception("Birthdays reminder failed")
+                await send(acc, reply)
+        await each("birthdays", job)
 
     async def run_extend():
-        try:
+        async def job(acc, alfred):
             alfred.extend_schedule()
-        except Exception:
-            log.exception("Extend failed")
+        await each("extend", job)
 
     for period, hour in CHECKS.items():
         scheduler.add_job(run_check, "cron", hour=hour, minute=0, args=[period], id=f"check_{period}", **common)

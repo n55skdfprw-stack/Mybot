@@ -24,7 +24,7 @@ def test_create_and_card(tmp_path):
         "Имя: Сергей\nФамилия: Афанасьев\n📞 +7 900 123-45-67\n💼 Тренер\n\n"
         "💬 Личная информация\n👍 Любит: хороший кофе\n👎 Не любит: опоздания\n\n"
         "🎂 День рождения: 15 марта · через 172 дня\n🤝 Должен вам: 5 000 ₽")
-    assert r.buttons[0] == [("🔎 Вернуться к поиску", "dos:list")]
+    assert r.buttons[0][0][0] == "🎁 Идея подарка" and r.buttons[1] == [("🔎 Вернуться к поиску", "dos:list")]
 
 
 def test_unknown_person_asks_to_create(tmp_path):

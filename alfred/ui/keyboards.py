@@ -8,14 +8,17 @@ from ..core.reply import Buttons
 from . import texts as T
 
 
-def main_menu() -> ReplyKeyboardMarkup:
+def main_menu(owner: bool = False) -> ReplyKeyboardMarkup:
+    rows = [
+        [KeyboardButton(text=T.MENU_TASKS), KeyboardButton(text=T.MENU_SCHEDULE)],
+        [KeyboardButton(text=T.MENU_NOTES), KeyboardButton(text=T.MENU_FINANCE)],
+        [KeyboardButton(text=T.MENU_BIRTHDAYS), KeyboardButton(text=T.MENU_DOSSIER)],
+        [KeyboardButton(text=T.MENU_WEATHER), KeyboardButton(text=T.MENU_MED)],
+    ]
+    if owner:
+        rows.append([KeyboardButton(text=T.MENU_USERS), KeyboardButton(text=T.MENU_SYSTEM)])
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=T.MENU_TASKS), KeyboardButton(text=T.MENU_SCHEDULE)],
-            [KeyboardButton(text=T.MENU_NOTES), KeyboardButton(text=T.MENU_FINANCE)],
-            [KeyboardButton(text=T.MENU_BIRTHDAYS), KeyboardButton(text=T.MENU_DOSSIER)],
-            [KeyboardButton(text=T.MENU_WEATHER), KeyboardButton(text=T.MENU_MED)],
-        ],
+        keyboard=rows,
         resize_keyboard=True,
         is_persistent=True,
         input_field_placeholder="Напишите Альфреду…",

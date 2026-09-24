@@ -10,18 +10,13 @@ from alfred import VERSION
 from alfred.brain.brain import Brain
 from alfred.brain.llm_client import GigaChatClient
 from alfred.config import load_config
-from alfred.core.alfred import Alfred
+from alfred.core.access import Access
+from alfred.core.admin import Admin
 from alfred.database.db import Database
-from alfred.database.repositories import ContextRepository, NoteRepository, TaskRepository, UserRepository
 from alfred.handlers.telegram import build_dispatcher
 from alfred.notifications.scheduler import build_scheduler
-from alfred.database.schedule_repo import EventRepository, NotificationRepository, RuleRepository
-from alfred.services.notes import NoteService
-from alfred.services.schedule import ScheduleService
-from alfred.database.finance_repo import DebtRepository, OperationRepository, PeopleRepository
 from alfred.services.currency import CurrencyService
-from alfred.services.finance import DebtService, FinanceService
-from alfred.services.tasks import TaskService
+from alfred.services.weather import WeatherService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("alfred")
@@ -32,7 +27,6 @@ async def main() -> None:
 
     db = Database(config.database_path)
     db.migrate()
-    user_id = UserRepository(db).ensure(config.owner_id, config.timezone.key, config.default_city)
 
     llm = GigaChatClient(config.gigachat_key, config.gigachat_model, config.gigachat_model_pro)
     if await llm.check():
@@ -40,31 +34,30 @@ async def main() -> None:
     else:
         log.error("GigaChat НЕ доступен с этого сервера! Проверьте ключ или хостинг.")
 
-    alfred = Alfred(
-        brain=Brain(llm),
-        tasks=TaskService(TaskRepository(db), user_id),
-        notes=NoteService(NoteRepository(db), user_id),
-        schedule=ScheduleService(EventRepository(db), RuleRepository(db), NotificationRepository(db), user_id),
-        context=ContextRepository(db),
-        user_id=user_id,
-        tz=config.timezone,
-        finance=FinanceService(OperationRepository(db), user_id),
-        debts=DebtService(DebtRepository(db), PeopleRepository(db), user_id),
-        currency=CurrencyService(),
-    )
+    access = Access(db, Brain(llm), config.owner_id, config.timezone, config.default_city,
+                    currency=CurrencyService(), weather=WeatherService())
+    owner = access.setup_owner()
+    log.info("Владелец: user_id=%s, пользователей всего: %s", owner.id, len(access.users.accounts()))
 
-    rates = await alfred.currency.get()
+    rates = await access.currency.get()
     if rates:
         log.info("Курсы ЦБ доступны: доллар %.2f ₽ на %s", rates.rub_per_unit.get("USD", 0), rates.day)
     else:
         log.error("Курсы ЦБ НЕ доступны с этого сервера — пересчёт валют работать не будет.")
 
     bot = Bot(token=config.telegram_token)
-    await bot.set_my_commands([BotCommand(command="start", description="Меню Альфреда"),
+    await bot.set_my_commands([BotCommand(command="start", description="🎩 Приветствую, Альфред!"),
                                BotCommand(command="clean", description="🧹 Чистый лист — удалить всё")])
-    dp = build_dispatcher(alfred, config.owner_id)
+    try:
+        await bot.set_my_short_description("🎩 Альфред — ваш онлайн дворецкий: дела, финансы, медкарта, погода.")
+        await bot.set_my_description("🎩 Добрый день! Я Альфред — ваш онлайн дворецкий.\n\n"
+                                     "Веду дела и распорядок, заметки, финансы, дни рождения, досье и медкарту, "
+                                     "подскажу погоду и напомню о важном.\n\nНажмите кнопку ниже, чтобы начать.")
+    except Exception:
+        log.exception("Не удалось обновить описание бота")
+    dp = build_dispatcher(access, Admin(access, llm))
 
-    scheduler = build_scheduler(bot, alfred, config.owner_id)
+    scheduler = build_scheduler(bot, access)
     scheduler.start()
 
     log.info("Альфред запущен (версия %s). База: %s", VERSION, config.database_path)

@@ -8,7 +8,7 @@ from typing import Iterator
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -18,6 +18,13 @@ CREATE TABLE IF NOT EXISTS users (
     timezone TEXT NOT NULL DEFAULT 'Europe/Moscow',
     home_city TEXT NOT NULL DEFAULT 'Санкт-Петербург',
     current_city TEXT,
+    username TEXT,                   -- @имя в Telegram (без @, маленькими буквами)
+    display_name TEXT,
+    role TEXT NOT NULL DEFAULT 'user',       -- owner / user
+    status TEXT NOT NULL DEFAULT 'active',   -- active / blocked
+    ai_limit INTEGER,                -- запросов к ИИ в день; NULL — по умолчанию
+    address TEXT,                    -- как обращаться: «Сэр» или «Мэм»; NULL — ещё не спросили
+    last_seen TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -220,6 +227,19 @@ CREATE TABLE IF NOT EXISTS med_contacts (
     created_at TEXT NOT NULL
 );
 
+-- Режимы доступа: приглашения и счётчик запросов к ИИ.
+CREATE TABLE IF NOT EXISTS invites (
+    username TEXT PRIMARY KEY,       -- без @, маленькими буквами
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ai_usage (
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    day TEXT NOT NULL,
+    count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, day)
+);
+
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 """
 
@@ -253,6 +273,13 @@ class Database:
                           "med_doses", "med_drugs", "med_cases", "med_allergies", "med_contacts"):
                 conn.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
 
+    def delete_user(self, user_id: int) -> None:
+        """Удалить пользователя вместе со всеми его данными."""
+        self.wipe_user_data(user_id)
+        with self.connect() as conn:
+            conn.execute("DELETE FROM ai_usage WHERE user_id=?", (user_id,))
+            conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+
     def migrate(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
@@ -262,6 +289,12 @@ class Database:
                 conn.execute("ALTER TABLE people ADD COLUMN dossier_hidden INTEGER NOT NULL DEFAULT 0")
             if "dossier_explicit" not in cols:
                 conn.execute("ALTER TABLE people ADD COLUMN dossier_explicit INTEGER NOT NULL DEFAULT 0")
+            ucols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
+            for col, ddl in (("username", "TEXT"), ("display_name", "TEXT"),
+                             ("role", "TEXT NOT NULL DEFAULT 'user'"), ("status", "TEXT NOT NULL DEFAULT 'active'"),
+                             ("ai_limit", "INTEGER"), ("last_seen", "TEXT"), ("address", "TEXT")):
+                if col not in ucols:
+                    conn.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
             row = conn.execute("SELECT version FROM schema_version").fetchone()
             if row is None:
                 conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))

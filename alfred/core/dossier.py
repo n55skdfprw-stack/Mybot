@@ -159,6 +159,9 @@ class DossierMixin:
             return self.dossier_view(edit=edit)
         self._set_last("person", card.id)
         rows = [[("🔎 Вернуться к поиску", "dos:list")], [("❌ Удалить досье", f"dos:del:{card.id}")]]
+        b = self.birthdays.of(card.id)
+        if b:
+            rows.insert(0, [("🎁 Идея подарка", f"bd:gift:{b.id}")])
         return Reply(DT.card(card, self._extra(card)), buttons=rows, edit=edit)
 
     def _confirm_delete_card(self, card: Card, edit: bool = True) -> Reply:

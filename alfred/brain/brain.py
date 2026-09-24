@@ -66,3 +66,32 @@ def resolve_dates(r: BrainResult, text: str, today: date) -> BrainResult:
         title = (title[:idx] + title[idx + len(r.due_when):]).strip(" ,.-—") or r.title
 
     return replace(r, title=title, due_date=due, new_due_date=new_due)
+
+
+GIFT_PROMPT = """Ты — Альфред, заботливый дворецкий. Помоги выбрать подарок на день рождения.
+Предложи ровно 5 идей подарка.
+Учитывай возраст и пол. Пол определи по имени или по слову («мама», «бабушка» — женщина; «папа», «дедушка» — мужчина);
+если пол неясен — предлагай то, что подойдёт любому.
+Главное — то, что известно о человеке: интересы, что любит, работа, факты. НИКОГДА не предлагай то, что он не любит.
+Разнообразь идеи: что-то для хобби, практичное, впечатление (поход, мастер-класс, билеты), что-то недорогое и милое.
+Формат: 5 строк, каждая — эмодзи, подарок, тире, коротко почему (до 12 слов).
+Без вступления, без заключения, без нумерации и без звёздочек."""
+
+
+def clean_ideas(raw: str) -> list[str]:
+    """Убираем нумерацию, звёздочки и лишнее — оставляем до 5 строк идей."""
+    import re
+    out = []
+    for line in raw.splitlines():
+        line = re.sub(r"^[\s>*#\-•]*(?:\d+[.)]\s*)?", "", line).replace("**", "").replace("__", "").strip()
+        if len(line) >= 4:
+            out.append(line[:160])
+    return out[:5]
+
+
+async def gift_ideas(llm: LLMClient, profile: str) -> list[str]:
+    try:
+        return clean_ideas(await llm.complete(GIFT_PROMPT, profile))
+    except LLMError:
+        log.exception("Gift ideas failed")
+        return []

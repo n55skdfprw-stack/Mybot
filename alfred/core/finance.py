@@ -77,6 +77,8 @@ class FinanceMixin:
     async def handle_callback_async(self, data: str) -> Reply:
         if data.startswith("wx:"):
             return await self.weather_callback(data)
+        if data.startswith("bd:gift:") and data.split(":")[2].isdigit():
+            return await self.gift_view(int(data.split(":")[2]))
         if data == "fin:rates":
             self._rates = await self.currency.get()
         return self.handle_callback(data)

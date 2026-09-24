@@ -9,12 +9,14 @@ from ..brain.parser import BrainResult
 from ..database.birthday_repo import Birthday
 from ..database.finance_repo import Person
 from ..services import search
-from ..services.birthdays import parse_birthday
+from ..brain.brain import gift_ideas
+from ..services.birthdays import parse_birthday, turning
+from ..services.dossier import lines as lines_of
 from ..ui import birthday_texts as B
 from ..ui.texts import MONTHS_GEN
 from .reply import Reply
 
-BD_BUTTONS = [[("✏️ Изменение/удаление", "bd:edit")]]
+BD_BUTTONS = [[("🎁 Идея подарка", "bd:giftpick")], [("✏️ Изменение/удаление", "bd:edit")]]
 BD_INTENTS = {"CREATE_BIRTHDAY", "UPDATE_BIRTHDAY", "DELETE_BIRTHDAY", "SHOW_BIRTHDAYS"}
 BD_WORDS = re.compile(r"день\s*рожд|дня\s*рожд|днюх|днем\s*рожд|родил(ся|ась)|\bдр\b")
 REMIND_DAYS = ((0, "🥳 Сегодня"), (1, "🎈 Завтра"), (7, "📅 Через неделю"))
@@ -178,12 +180,71 @@ class BirthdayMixin:
             return self.birthdays_view(edit=True)
         if parts[1] == "edit":
             return self.birthdays_edit_view()
+        if parts[1] == "giftpick":
+            return self.gift_pick_view()
         if parts[1] == "del" and len(parts) == 3 and parts[2].isdigit():
             b = self.birthdays.get(int(parts[2]))
             if b:
                 self.birthdays.delete(b)
             return self.birthdays_edit_view()
         return Reply("🎩 Сэр, эта кнопка уже неактуальна!", clear_source_buttons=True)
+
+    # ------------------------------------------------------------ 🎁 идея подарка
+    def gift_pick_view(self, edit: bool = True) -> Reply:
+        today = self.today()
+        items = self.birthdays.all(today)
+        if not items:
+            return self.birthdays_view(edit=edit)
+        rows = [[(f"🎁 {self._name(b.person_id)} — {B.bday_date(b)}"[:60], f"bd:gift:{b.id}")] for b in items[:12]]
+        rows.append([("↩️ Назад", "bd:list")])
+        return Reply("🎩 Для кого подобрать подарок, Сэр?", buttons=rows, edit=edit)
+
+    def _gift_profile(self, b: Birthday) -> tuple[str, list[str]]:
+        """Что знаем о человеке: для ИИ и для строки «учёл из досье»."""
+        today = self.today()
+        name = self._name(b.person_id)
+        age = turning(b, today)
+        lines = [f"Имя (или кем приходится): {name}",
+                 f"Исполнится: {age}" if age else "Возраст: неизвестен",
+                 f"День рождения: {B.bday_date(b)}, {B.when(b, today)}"]
+        used = []
+        card = self.dossier.get(b.person_id)
+        if card:
+            likes = [x[2:] for x in lines_of(card.likes_dislikes) if x.startswith("+ ")]
+            dislikes = [x[2:] for x in lines_of(card.likes_dislikes) if x.startswith("- ")]
+            for label, values, short in (("Интересы", lines_of(card.interests), "интересы"),
+                                         ("Любит", likes, "любит"),
+                                         ("Предпочтения", lines_of(card.preferences), "предпочтения"),
+                                         ("Работа", [card.job] if card.job else [], "работа"),
+                                         ("Важные факты", lines_of(card.important_facts), "факты"),
+                                         ("НЕ любит (не дарить!)", dislikes, "не любит")):
+                if values:
+                    lines.append(f"{label}: {', '.join(values)}")
+                    used.append(f"{short}: {', '.join(v[:1].lower() + v[1:] for v in values)}")
+        return "\n".join(lines), used
+
+    async def gift_view(self, bday_id: int, edit: bool = True) -> Reply:
+        b = self.birthdays.get(bday_id)
+        if not b:
+            return self.birthdays_view(edit=edit)
+        back = [[("🔄 Ещё идеи", f"bd:gift:{b.id}"), ("↩️ Назад", "bd:list")]]
+        if self.quota:
+            refusal = self.quota()
+            if refusal:
+                return Reply(refusal, edit=edit)
+        profile, used = self._gift_profile(b)
+        ideas = await gift_ideas(self.brain.llm, profile)
+        if not ideas:
+            return Reply("🎩 Прошу прощения, Сэр! Не удалось придумать — попробуйте чуть позже.",
+                         buttons=back, edit=edit)
+        today = self.today()
+        age = turning(b, today)
+        head = (f"🎩 Идеи подарка для: {self._name(b.person_id)}, Сэр!\n\n"
+                f"🎂 {b.day} {MONTHS_GEN[b.month - 1]} · {B.when(b, today)}")
+        head += f" · исполнится {B.years(age)}" if age else ""
+        known = ("📂 Учёл из досье: " + "; ".join(used)) if used else \
+            "📂 В досье о человеке пока ничего нет — идеи общие. Допишите, что он любит, и идеи станут точнее."
+        return Reply(f"{head}\n{known}\n\n" + "\n".join(ideas), buttons=back, edit=edit)
 
     # ------------------------------------------------------------ напоминание в 12:00
     def birthday_reminder(self) -> Optional[Reply]:
@@ -200,4 +261,6 @@ class BirthdayMixin:
             blocks.append(f"{head}{date_txt}:\n{names}")
         if not blocks:
             return None
-        return Reply("🎩 Сэр, позвольте напомнить о днях рождения!\n\n" + "\n\n".join(blocks))
+        people = [b for shift, _ in REMIND_DAYS for b in self.birthdays.on(today + timedelta(days=shift))]
+        rows = [[(f"🎁 Подарок: {self._name(b.person_id)}"[:60], f"bd:gift:{b.id}")] for b in people[:6]]
+        return Reply("🎩 Сэр, позвольте напомнить о днях рождения!\n\n" + "\n\n".join(blocks), buttons=rows)

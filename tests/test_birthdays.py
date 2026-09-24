@@ -46,7 +46,7 @@ def test_create_and_list_sorted(tmp_path):
     v = a.birthdays_view()
     lines = v.text.split("\n")[2:]
     assert lines[0].startswith("🎂 Сергей") and lines[1].startswith("🎂 Мама")
-    assert v.buttons == [[("✏️ Изменение/удаление", "bd:edit")]]
+    assert v.buttons == [[("🎁 Идея подарка", "bd:giftpick")], [("✏️ Изменение/удаление", "bd:edit")]]
 
 
 def test_menu_button(tmp_path):
@@ -199,3 +199,51 @@ def test_answer_uses_own_words_not_ai_guess(tmp_path):
     assert r.text == "🎩 Разумеется, Сэр! Какого числа день рождения?"
     r = say(a, llm, "Через 3 дня", intent="ANSWER", answer="3 июля")
     assert "Дима — 27 сентября · через 3 дня" in r.text
+
+
+# ---------------------------------------------------------------- 8.2: 🎁 идея подарка
+
+IDEAS = ("1. 🌸 **Букет пионов** — она их любит\n2. 🪴 Набор для сада — интерес к даче\n"
+         "3. 🎟 Билеты в театр — впечатление\n4. 🧣 Тёплый шарф — практично\n5. 📷 Фотокнига — память")
+
+
+def test_gift_ideas_use_dossier(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "x", intent="CREATE_BIRTHDAY", person="Мама", bday_text="12 марта 1971")
+    say(a, llm, "Мама любит пионы", intent="UPDATE_PERSON", person="Мама", dossier={"likes": "пионы"})
+    say(a, llm, "Мама не любит сладкое", intent="UPDATE_PERSON", person="Мама", dossier={"dislikes": "сладкое"})
+    prompts = []
+    orig = llm.complete
+
+    async def spy(system, user, pro=False):
+        prompts.append(user)
+        return await orig(system, user, pro)
+    llm.complete = spy
+    llm.queue.append(IDEAS)
+    r = run(a.handle_callback_async(a.birthdays_view().buttons[0][0][1]))   # 🎁 → выбор человека
+    r = run(a.handle_callback_async(r.buttons[0][0][1]))
+    style_ok(r.text)
+    assert r.text.startswith("🎩 Идеи подарка для: Мама, Сэр!\n\n🎂 12 марта · через 169 дней · исполнится 56 лет\n"
+                             "📂 Учёл из досье: любит: пионы; не любит: сладкое")
+    assert "🌸 Букет пионов — она их любит" in r.text and "**" not in r.text and "1." not in r.text
+    assert "Исполнится: 56" in prompts[0] and "НЕ любит (не дарить!): Сладкое" in prompts[0]
+    assert r.buttons[0][0] == ("🔄 Ещё идеи", r.buttons[0][0][1])
+
+
+def test_gift_without_dossier_and_reminder_button(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "x", intent="CREATE_BIRTHDAY", person="Олег", bday_text="25 сентября")
+    rem = a.birthday_reminder()
+    assert rem.buttons == [[("🎁 Подарок: Олег", rem.buttons[0][0][1])]]
+    llm.queue.append(IDEAS)
+    r = run(a.handle_callback_async(rem.buttons[0][0][1]))
+    assert "📂 В досье о человеке пока ничего нет — идеи общие." in r.text
+
+
+def test_gift_ai_down(tmp_path):
+    from alfred.brain.llm_client import LLMError
+    a, llm = make(tmp_path)
+    say(a, llm, "x", intent="CREATE_BIRTHDAY", person="Олег", bday_text="25 сентября")
+    llm.queue.append(LLMError("нет связи"))
+    r = run(a.handle_callback_async(f"bd:gift:{a.birthdays.all(a.today())[0].id}"))
+    assert r.text.startswith("🎩 Прошу прощения, Сэр! Не удалось придумать")
