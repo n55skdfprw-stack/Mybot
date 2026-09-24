@@ -13,6 +13,7 @@ from typing import Callable, Optional
 from zoneinfo import ZoneInfo
 
 from ..brain.brain import Brain, BrainUnavailable
+from ..brain.dates import find_dates
 from ..brain.parser import BrainResult
 from ..database.repositories import Context, ContextRepository, Note, Task
 from ..services import search
@@ -330,8 +331,14 @@ class Alfred(ScheduleMixin, FinanceMixin):
     def _create_task(self, r: BrainResult) -> Reply:
         if not r.title:
             return self._ask(r, "title", "🎩 Разумеется, Сэр! Что нужно сделать?")
+        due = r.due_date
+        # Дату ставим, только если пользователь сам её назвал («завтра», «в пятницу»).
+        # Если ИИ придумал «сегодня» от себя — дело записывается без даты.
+        if due and self._message and not find_dates(self._message, self.today()):
+            log.info("Guard: task date %s not in message, dropped", due)
+            due = None
         try:
-            task = self.tasks.create(r.title, r.due_date, force=r.force_duplicate)
+            task = self.tasks.create(r.title, due, force=r.force_duplicate)
         except DuplicateError:
             return Reply("🎩 Сэр, такое дело уже есть в списке!")
         self._set_last("task", task.id)

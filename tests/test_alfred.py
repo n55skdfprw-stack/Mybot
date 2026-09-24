@@ -232,7 +232,7 @@ def test_checks(tmp_path):
     assert a.check_message("morning") is None  # нет дел — не беспокоим
     llm.said(intent="CREATE_TASK", title="Купить корм коту")
     llm.said(intent="CREATE_TASK", title="Будущее дело", due_when="10 октября")
-    run(a.handle_text("x")); run(a.handle_text("y"))
+    run(a.handle_text("Купить корм коту")); run(a.handle_text("Будущее дело 10 октября"))
     m = a.check_message("morning")
     assert "Купить корм коту" in m.text and "Будущее дело" not in m.text
     style_ok(m.text)
@@ -438,7 +438,7 @@ def test_restore_task(tmp_path):
     a, llm, _ = make(tmp_path)
     llm.said(intent="CREATE_TASK", title="Купить молоко", due_when="в пятницу")
     llm.said(intent="CREATE_TASK", title="Купить хлеб")
-    run(a.handle_text("x")); run(a.handle_text("y"))
+    run(a.handle_text("Купить молоко в пятницу")); run(a.handle_text("Купить хлеб"))
     llm.said(intent="COMPLETE_TASK", target="молоко")
     run(a.handle_text("Сделал молоко"))
     llm.said(intent="RESTORE_TASK", target="молоко")
@@ -507,3 +507,21 @@ def test_notes_view_has_no_hint_phrase(tmp_path):
     llm.said(intent="CREATE_NOTE", content="Код домофона 1234")
     run(a.handle_text("x"))
     assert "Чтобы найти" not in a.notes_view().text
+
+
+# ---------------------------------------------------------------- версия 3.5
+
+def test_task_without_date_stays_without_date(tmp_path):
+    a, llm, _ = make(tmp_path)
+    # ИИ по ошибке добавил «сегодня», хотя пользователь дату не называл
+    llm.said(intent="CREATE_TASK", title="Выкинуть мусор", due_when="сегодня")
+    r = run(a.handle_text("Выкинуть мусор"))
+    assert a.tasks.active()[0].due_date is None
+    assert "сегодня" not in r.text
+
+
+def test_task_with_date_keeps_date(tmp_path):
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_TASK", title="Заправить кровать", due_when="сегодня")
+    r = run(a.handle_text("Сегодня заправить кровать"))
+    assert a.tasks.active()[0].due_date == date(2026, 9, 23) and "сегодня" in r.text
