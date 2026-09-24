@@ -8,7 +8,7 @@ from typing import Iterator
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -134,6 +134,7 @@ CREATE TABLE IF NOT EXISTS people (
     preferences TEXT,
     likes_dislikes TEXT,
     important_facts TEXT,
+    dossier_hidden INTEGER NOT NULL DEFAULT 0,  -- 1: досье удалено, но человек остался ради долга/дня рождения
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -195,6 +196,10 @@ class Database:
     def migrate(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            # Старые базы: добавляем новые колонки, если их ещё нет.
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(people)")}
+            if "dossier_hidden" not in cols:
+                conn.execute("ALTER TABLE people ADD COLUMN dossier_hidden INTEGER NOT NULL DEFAULT 0")
             row = conn.execute("SELECT version FROM schema_version").fetchone()
             if row is None:
                 conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))

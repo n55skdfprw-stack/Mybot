@@ -12,6 +12,7 @@ INTENTS = [
     "SHOW_STATISTICS", "SHOW_BALANCE", "CREATE_DEBT", "UPDATE_DEBT", "REPAY_DEBT", "DELETE_DEBT", "SHOW_DEBTS",
     "SHOW_CURRENCY_RATES", "CONVERT_CURRENCY",
     "CREATE_BIRTHDAY", "UPDATE_BIRTHDAY", "DELETE_BIRTHDAY", "SHOW_BIRTHDAYS",
+    "CREATE_PERSON", "UPDATE_PERSON", "DELETE_PERSON", "SHOW_PERSON", "SEARCH_PEOPLE",
     "ANSWER", "CANCEL", "GREETING", "THANKS", "OTHER_SECTION", "UNKNOWN",
 ]
 
@@ -19,7 +20,7 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 Твоя единственная задача: разобрать сообщение пользователя и вернуть ОДИН JSON-объект. Никакого текста вокруг JSON.
 
 Поля JSON (лишние поля не добавляй, неизвестные ставь null):
-- "intent": одно из: CREATE_TASK, UPDATE_TASK, COMPLETE_TASK, RESTORE_TASK, DELETE_TASK, SHOW_TASKS, CREATE_NOTE, UPDATE_NOTE, DELETE_NOTE, SEARCH_NOTE, SHOW_NOTES, CREATE_EVENT, UPDATE_EVENT, DELETE_EVENT, SHOW_SCHEDULE, CREATE_EXPENSE, CREATE_INCOME, UPDATE_FINANCE, DELETE_FINANCE, SEARCH_FINANCE, SHOW_STATISTICS, SHOW_BALANCE, CREATE_DEBT, UPDATE_DEBT, REPAY_DEBT, DELETE_DEBT, SHOW_DEBTS, SHOW_CURRENCY_RATES, CONVERT_CURRENCY, CREATE_BIRTHDAY, UPDATE_BIRTHDAY, DELETE_BIRTHDAY, SHOW_BIRTHDAYS, ANSWER, CANCEL, GREETING, THANKS, OTHER_SECTION, UNKNOWN
+- "intent": одно из: CREATE_TASK, UPDATE_TASK, COMPLETE_TASK, RESTORE_TASK, DELETE_TASK, SHOW_TASKS, CREATE_NOTE, UPDATE_NOTE, DELETE_NOTE, SEARCH_NOTE, SHOW_NOTES, CREATE_EVENT, UPDATE_EVENT, DELETE_EVENT, SHOW_SCHEDULE, CREATE_EXPENSE, CREATE_INCOME, UPDATE_FINANCE, DELETE_FINANCE, SEARCH_FINANCE, SHOW_STATISTICS, SHOW_BALANCE, CREATE_DEBT, UPDATE_DEBT, REPAY_DEBT, DELETE_DEBT, SHOW_DEBTS, SHOW_CURRENCY_RATES, CONVERT_CURRENCY, CREATE_BIRTHDAY, UPDATE_BIRTHDAY, DELETE_BIRTHDAY, SHOW_BIRTHDAYS, CREATE_PERSON, UPDATE_PERSON, DELETE_PERSON, SHOW_PERSON, SEARCH_PEOPLE, ANSWER, CANCEL, GREETING, THANKS, OTHER_SECTION, UNKNOWN
 - "title": название нового дела, коротко, с большой буквы, БЕЗ слов о дате, глагол в неопределённой форме: «Подготовить отчёт», «Купить хлеб», «Позвонить маме» (а не «Подготовь отчёт») (строка или null)
 - "due_when": слова пользователя о дате дела, дословно, как он их написал: «завтра», «в пятницу», «15 октября», «через 3 дня» (строка или null). Сам дату НЕ вычисляй. Если пользователь дату не называл — due_when: null (НЕ ставь «сегодня» от себя).
 - "target": как пользователь назвал существующее дело/заметку, которое нужно найти (строка или null). Если пользователь говорит «её», «его», «это», «последнее» и имеет в виду последний объект из контекста — пиши "LAST".
@@ -33,7 +34,9 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 - "scope": "all", если действие относится ко ВСЕМ делам/заметкам, иначе "one"
 - "force_duplicate": true, только если пользователь явно просит «ещё одно», «ещё раз добавь»
 - "answer": если Альфред задал вопрос (см. ожидание ниже) и сообщение — ответ на него, то intent = "ANSWER", а сюда — суть ответа
-- "section": для OTHER_SECTION — одно из: dossier, weather
+- "section": для OTHER_SECTION — одно из: weather
+- "dossier": сведения о человеке для досье — объект, только названные поля: "phone" (телефон), "address" (адрес), "job" (работа, должность), "first_name", "last_name" (фамилия), "interests" (интересы), "preferences" (предпочтения), "likes" (что любит), "dislikes" (что не любит), "facts" (любые другие важные факты). Значения — коротко, как сказал пользователь (или null)
+- "dossier_remove": true, если сведения нужно УБРАТЬ из досье («больше не любит кофе», «удали адрес Сергея»)
 - "bday_text": слова о дате дня рождения дословно: «12 марта», «5 мая 1998», «12.03» (или null). Сам дату НЕ вычисляй.
 
 Поля для финансов (суммы и даты сам НЕ вычисляй — цитируй слова пользователя):
@@ -93,7 +96,8 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 - Исправление долга: «Сергей должен не 5000, а 6000», «Долг Максиму не 3000, а 2500», а также «Не 5000, а 6000», если последний объект разговора — долг, — UPDATE_DEBT (person — если назван, new_amount_text — новая сумма). «Удали долг Сергея» — DELETE_DEBT.
 - «Курс доллара», «Курсы валют» — SHOW_CURRENCY_RATES. «Сколько 100 долларов в рублях?», «5000 рублей в евро», «100 usd» — CONVERT_CURRENCY.
 - Дни рождения: «У мамы день рождения 12 марта», «Сергей родился 5 мая 1998» — CREATE_BIRTHDAY (person — чей, в именительном падеже: «Мама», «Сергей»; bday_text — дата). «У Сергея день рождения не 5, а 6 мая», а также «Не 12, а 14 марта», если последний объект разговора — день рождения, — UPDATE_BIRTHDAY. «Удали день рождения Сергея» — DELETE_BIRTHDAY. «Когда день рождения у мамы?», «Покажи дни рождения», «У кого скоро день рождения?» — SHOW_BIRTHDAYS (person — если назван).
-- Досье, погода, время в городах — OTHER_SECTION.
+- Досье (человек и сведения о нём): «Создай досье на Сергея Афанасьева» — CREATE_PERSON. «Запиши номер Сергея +7…», «Сергей работает тренером», «Маша любит пионы», «Олег не любит опоздания», «Добавь в досье Сергея, что у него есть собака», «Фамилия Сергея — Афанасьев» — UPDATE_PERSON (person + dossier). «Сергей больше не любит кофе», «Удали адрес Сергея» — UPDATE_PERSON с dossier_remove: true. «Покажи досье Сергея», «Что я знаю о Маше?», «Какой номер у Сергея?» — SHOW_PERSON. «Кто работает тренером?», «Кто любит кофе?» — SEARCH_PEOPLE (query — что искать: «тренер», «кофе»). «Удали досье Сергея» — DELETE_PERSON. Если о человеке говорили только что и имя не названо («Добавь ему телефон…») — person: null.
+- Погода, время в городах — OTHER_SECTION.
 - «Отмена», «не надо», «забудь» — CANCEL. Приветствие — GREETING. Благодарность — THANKS.
 - Если непонятно — UNKNOWN. Ничего не выдумывай.
 
@@ -132,6 +136,12 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 
 Пример 14. Сообщение: «У мамы день рождения 12 марта» →
 {"intent":"CREATE_BIRTHDAY","person":"Мама","bday_text":"12 марта","scope":"one"}
+
+Пример 15. Сообщение: «Сергей Афанасьев работает тренером и любит хороший кофе» →
+{"intent":"UPDATE_PERSON","person":"Сергей Афанасьев","dossier":{"job":"тренер","likes":"хороший кофе"},"scope":"one"}
+
+Пример 16. Сообщение: «Кто у меня работает тренером?» →
+{"intent":"SEARCH_PEOPLE","query":"тренер","scope":"one"}
 
 Пример 2. Сообщение: «Запиши, что паспорт лежит в верхнем ящике» →
 {"intent":"CREATE_NOTE","content":"Паспорт лежит в верхнем ящике","scope":"one"}

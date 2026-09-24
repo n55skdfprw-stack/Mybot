@@ -29,6 +29,9 @@ from ..services.finance import DebtService, FinanceService
 from ..ui import finance_texts as F
 from .finance import FinanceMixin
 from .birthdays import BirthdayMixin
+from .dossier import DossierMixin
+from ..database.dossier_repo import DossierRepository
+from ..services.dossier import DossierService
 from ..database.birthday_repo import BirthdayRepository
 from ..services.birthdays import BirthdayService
 from .schedule import SCHEDULE_BUTTONS, ScheduleMixin, infer_type
@@ -47,7 +50,7 @@ RESTORE_RE = re.compile(
 )
 
 
-class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin):
+class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin):
     def __init__(self, brain: Brain, tasks: TaskService, notes: NoteService, schedule: ScheduleService,
                  context: ContextRepository, user_id: int, tz: ZoneInfo,
                  clock: Optional[Callable[[], datetime]] = None, *,
@@ -62,6 +65,7 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin):
         self.debts = debts or DebtService(DebtRepository(db), PeopleRepository(db), user_id)
         self.currency = currency or CurrencyService()
         self.birthdays = birthdays or BirthdayService(BirthdayRepository(db), user_id)
+        self.dossier = DossierService(DossierRepository(db), user_id)
         self._rates = None
         self.context = context
         self.user_id = user_id
@@ -118,6 +122,10 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin):
             op = self.finance.get(ctx.entity_id)
             if op:
                 return f"финансовая запись: {F.op_line(op)}"
+        if ctx.entity_type == "person" and ctx.entity_id:
+            c = self.dossier.get(ctx.entity_id)
+            if c:
+                return f"досье: {c.full_name}"
         if ctx.entity_type == "birthday" and ctx.entity_id:
             b = self.birthdays.get(ctx.entity_id)
             if b:
@@ -172,6 +180,8 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin):
             return self.statistics_view()
         if button == T.MENU_BIRTHDAYS:
             return self.birthdays_view()
+        if button == T.MENU_DOSSIER:
+            return self.dossier_view()
         return Reply(T.SECTION_NOT_READY)
 
     async def handle_text(self, text: str) -> Reply:
@@ -202,6 +212,7 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin):
         result = self._guard_short_answer(result, text, ctx)
         result = self._guard_finance(result, text)
         result = self._guard_birthday(result, text)
+        result = self._guard_dossier(result, text)
         await self._prefetch_rates(result)
         try:
             return self._execute(result, ctx)
@@ -288,7 +299,12 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin):
             "GREETING": lambda _r: Reply(T.greeting(self.now())),
             "THANKS": lambda _r: Reply(T.pick(*T.THANKS)),
             "OTHER_SECTION": lambda r: self.birthdays_view() if r.section == "birthdays"
-            else Reply(T.SECTION_NOT_READY),
+            else self.dossier_view() if r.section == "dossier" else Reply(T.SECTION_NOT_READY),
+            "CREATE_PERSON": self._create_person,
+            "UPDATE_PERSON": self._update_person,
+            "DELETE_PERSON": self._delete_person,
+            "SHOW_PERSON": self._show_person,
+            "SEARCH_PEOPLE": self._search_people,
             "CREATE_BIRTHDAY": self._create_birthday,
             "UPDATE_BIRTHDAY": self._update_birthday,
             "DELETE_BIRTHDAY": self._delete_birthday,
@@ -633,7 +649,9 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin):
                           "DELETE_DEBT": self._delete_debt, "UPDATE_DEBT": None,
                           "CREATE_BIRTHDAY": self._create_birthday, "UPDATE_BIRTHDAY": self._update_birthday,
                           "DELETE_BIRTHDAY": self._delete_birthday,
-                          "SHOW_BIRTHDAYS": self._show_birthdays}.get(r.intent)
+                          "SHOW_BIRTHDAYS": self._show_birthdays,
+                          "CREATE_PERSON": self._create_person, "UPDATE_PERSON": self._update_person,
+                          "DELETE_PERSON": self._delete_person, "SHOW_PERSON": self._show_person}.get(r.intent)
                 if not action:
                     return Reply(T.CANCELLED, edit=True)
                 return replace(action(r, chosen=person), edit=True)
@@ -670,6 +688,9 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin):
 
         if kind == "bd":
             return self.birthday_callback(parts)
+
+        if kind == "dos":
+            return self.dossier_callback(parts)
 
         if kind == "sched":
             if parts[1] == "week":

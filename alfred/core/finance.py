@@ -37,7 +37,7 @@ FLAGS = {"USD": "🇺🇸 Доллар", "EUR": "🇪🇺 Евро", "CNY": "�
 PURCHASE_RE = re.compile(r"\b(потратил\w*|купил\w*|заплатил\w*|оплатил\w*|отдал\w*\s+за)\b", re.IGNORECASE)
 TOPUP_RE = re.compile(r"\bпополн\w*", re.IGNORECASE)
 # На эти вопросы Альфреда короткий ответ — это всегда ответ, а не новая команда.
-SHORT_ANSWER_PARAMS = {"category", "person", "amount_text", "new_amount_text", "bday_text"}
+SHORT_ANSWER_PARAMS = {"category", "person", "amount_text", "new_amount_text", "bday_text", "query"}
 
 
 def _day_short(d: date) -> str:

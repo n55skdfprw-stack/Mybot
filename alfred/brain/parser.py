@@ -59,6 +59,8 @@ class BrainResult:
     direction: Optional[str] = None
     convert_to: Optional[str] = None
     bday_text: Optional[str] = None
+    dossier: Optional[dict] = None
+    dossier_remove: bool = False
 
 
 class ParseError(Exception):
@@ -88,6 +90,17 @@ def _date(value) -> Optional[date]:
         return date.fromisoformat(s[:10])
     except ValueError:
         return None
+
+
+DOSSIER_KEYS = {"phone", "address", "job", "first_name", "last_name", "interests", "preferences", "facts",
+                "likes", "dislikes"}
+
+
+def _dossier(value) -> Optional[dict]:
+    if not isinstance(value, dict):
+        return None
+    out = {k: _str(v) for k, v in value.items() if k in DOSSIER_KEYS and _str(v)}
+    return out or None
 
 
 def extract_json(raw: str) -> dict:
@@ -159,4 +172,6 @@ def parse(raw: str) -> BrainResult:
         direction=data.get("direction") if data.get("direction") in ("owes_me", "i_owe") else None,
         convert_to=_str(data.get("convert_to")),
         bday_text=_str(data.get("bday_text")),
+        dossier=_dossier(data.get("dossier")),
+        dossier_remove=data.get("dossier_remove") is True,
     )
