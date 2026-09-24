@@ -465,3 +465,15 @@ def test_same_day_same_category_grouped(tmp_path):
     # удаляем одну поездку прямо из группы
     r = a.handle_callback(r.buttons[0][0][1])
     assert r.text.count("🕐") == 1
+
+
+def test_group_shows_transport_kind(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "Пополнил бск на 1000", intent="CREATE_EXPENSE", amount_text="1000", category="транспорт")
+    say(a, llm, "Потратил 85 на автобус", intent="CREATE_EXPENSE", amount_text="85", category="автобус")
+    say(a, llm, "86 на метро", intent="CREATE_EXPENSE", amount_text="86", category="метро")
+    r = a.handle_callback("fin:exp")
+    r = a.handle_callback(r.buttons[0][0][1])
+    lines = [l for l in r.text.split("\n") if l.startswith("🕐")]
+    assert lines[0].endswith("−1 000 ₽ БСК") and lines[1].endswith("−85 ₽ Автобус") and lines[2].endswith("−86 ₽ Метро")
+    assert r.buttons[1][0][0].endswith("85 ₽ Автобус")

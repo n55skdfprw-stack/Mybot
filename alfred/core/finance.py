@@ -172,7 +172,9 @@ class FinanceMixin:
                 return self._ask(r, "category", "🎩 Разумеется, Сэр! На что был расход?")
         else:
             category = said
-        op = self.finance.add(op_type, rub, category, r.description, self._op_day(r), orig, cur)
+        heard = " ".join(filter(None, [self._message, r.description, r.category]))
+        detail = F.match_detail(category, heard)
+        op = self.finance.add(op_type, rub, category, detail or r.description, self._op_day(r), orig, cur)
         self._set_last("finance", op.id)
         amount = F.money(op.amount) + (f" ({F.money(orig, cur)})" if cur else "")
         what = f" — {category.lower()}" if category else ""
@@ -370,7 +372,7 @@ class FinanceMixin:
             return self.ops_list_view("expense", edit=edit)
         key = self._group_key(op)
         ops = [o for o in self.finance.between(op.date, op.date, op.type) if self._group_key(o) == key]
-        ops.sort(key=lambda o: o.created_at)
+        ops.sort(key=lambda o: (o.created_at, o.id))
         back = "fin:exp" if op.type == "expense" else "fin:inc"
         if not ops:
             return self.ops_list_view(op.type, edit=edit)
@@ -378,12 +380,17 @@ class FinanceMixin:
         lines = []
         for o in ops:
             orig = f" ({F.money(o.original_amount, o.original_currency)})" if o.original_currency else ""
-            note = f" — {o.description}" if o.description and o.description.lower() != (key[2] or "").lower() else ""
+            desc = (o.description or "").strip()
+            note = f" {desc[:1].upper() + desc[1:]}" if desc and desc.lower() != (key[2] or "").lower() else ""
             lines.append(f"🕐 {self._op_time(o)} — {sign}{F.money(o.amount)}{orig}{note}")
         icon = F.emoji(op.category) if op.type == "expense" else "💵"
         day = f"{op.date.day} {F.MONTHS_GEN[op.date.month - 1]}"
         head = f"🎩 {icon} {key[2]}, {day} — {F.money(sum(o.amount for o in ops))}, Сэр!"
-        rows = [[(f"❌ {self._op_time(o)} — {F.money(o.amount)}", f"fin:grpdel:{o.id}")] for o in ops[:10]]
+        def label(o: Operation) -> str:
+            desc = (o.description or "").strip()
+            extra = f" {desc[:1].upper() + desc[1:]}" if desc and desc.lower() != (key[2] or "").lower() else ""
+            return f"❌ {self._op_time(o)} — {F.money(o.amount)}{extra}"[:60]
+        rows = [[(label(o), f"fin:grpdel:{o.id}")] for o in ops[:10]]
         rows.append([("↩️ Назад", back)])
         return Reply(head + "\n\n" + "\n".join(lines), buttons=rows, edit=edit)
 

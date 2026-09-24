@@ -69,3 +69,24 @@ def op_line(o: Operation) -> str:
     orig = f" ({money(o.original_amount, o.original_currency)})" if o.original_currency else ""
     what = o.category or o.description or ("Доход" if o.type == "income" else "Расход")
     return f"{emoji(o.category) if o.type == 'expense' else '💵'} {day} — {sign}{money(o.amount)}{orig} — {what}"
+
+
+# Уточнение внутри категории: на чём именно ехал. Порядок важен — первое совпадение.
+DETAILS = {
+    "Транспорт": [
+        ("БСК", r"\bбск\b"), ("Подорожник", r"подорожник"), ("Тройка", r"\bтройк"),
+        ("Проездной", r"проездн|транспортн\w*\s+карт"), ("Метро", r"метро"),
+        ("Маршрутка", r"маршрутк"), ("Автобус", r"автобус"), ("Трамвай", r"трамва"),
+        ("Троллейбус", r"троллейбус"), ("Электричка", r"электричк"), ("Поезд", r"поезд"),
+        ("Каршеринг", r"каршеринг"), ("Бензин", r"бензин|заправк"), ("Парковка", r"парковк"),
+    ],
+}
+
+
+def match_detail(category: Optional[str], text: str) -> Optional[str]:
+    """«Потратил 85 на автобус» → «Автобус». None, если уточнения нет."""
+    t = (text or "").lower().replace("ё", "е")
+    for label, pattern in DETAILS.get(category or "", []):
+        if re.search(pattern, t):
+            return label
+    return None
