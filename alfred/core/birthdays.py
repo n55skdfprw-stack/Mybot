@@ -27,7 +27,11 @@ class BirthdayMixin:
         return p.full_name if p else "Без имени"
 
     def _said_birthday(self, r: BrainResult):
-        return parse_birthday(r.bday_text, self.today()) or parse_birthday(self._message, self.today())
+        """Дату берём только из слов пользователя. Если ИИ придумал дату, которой в сообщении нет
+        («Запиши день рождения Оли» → «послезавтра» из прошлого сообщения), — не верим и переспрашиваем."""
+        if self._message:
+            return parse_birthday(self._message, self.today())
+        return parse_birthday(r.bday_text, self.today())
 
     def _last_birthday(self) -> Optional[Birthday]:
         ctx = self._ctx()

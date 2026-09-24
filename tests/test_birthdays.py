@@ -4,10 +4,17 @@ from datetime import date, datetime
 
 from alfred.services.birthdays import parse_birthday
 
-from .test_finance import make as make_fin, run, say
+from .test_finance import make as make_fin, run, say as _say
 from .test_alfred import TZ, style_ok
 
 TODAY = date(2026, 9, 24)
+
+
+def say(a, llm, text, **ai):
+    """Заглушка «x» превращается в настоящую фразу: «Мама день рождения 12 марта»."""
+    if text == "x" and ai.get("bday_text"):
+        text = f"{ai.get('person', '')} день рождения {ai['bday_text']}"
+    return _say(a, llm, text, **ai)
 
 
 def make(tmp_path):
@@ -172,3 +179,13 @@ def test_answer_relative_date(tmp_path):
     assert r.text == "🎩 Разумеется, Сэр! Какого числа день рождения?"
     r = say(a, llm, "Послезавтра", intent="UNKNOWN")
     assert "Петя — 26 сентября · послезавтра" in r.text
+
+
+def test_ai_invented_date_is_ignored(tmp_path):
+    """Живая ошибка: «Запиши день рождения Оли» записало «послезавтра» из прошлого сообщения."""
+    a, llm = make(tmp_path)
+    say(a, llm, "Петя день рождения послезавтра", intent="CREATE_BIRTHDAY", person="Петя", bday_text="послезавтра")
+    r = say(a, llm, "Запиши день рождения Оли", intent="CREATE_BIRTHDAY", person="Оля", bday_text="послезавтра")
+    assert r.text == "🎩 Разумеется, Сэр! Какого числа день рождения?"
+    r = say(a, llm, "3 июня", intent="ANSWER", answer="3 июня")
+    assert "Оля — 3 июня" in r.text
