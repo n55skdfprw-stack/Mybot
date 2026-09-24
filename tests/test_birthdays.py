@@ -189,3 +189,13 @@ def test_ai_invented_date_is_ignored(tmp_path):
     assert r.text == "🎩 Разумеется, Сэр! Какого числа день рождения?"
     r = say(a, llm, "3 июня", intent="ANSWER", answer="3 июня")
     assert "Оля — 3 июня" in r.text
+
+
+def test_answer_uses_own_words_not_ai_guess(tmp_path):
+    """Живая ошибка: на «Через 3 дня» ИИ вписал в ответ «3 июля» из прошлой записи про Олю."""
+    a, llm = make(tmp_path)
+    say(a, llm, "У Оли день рождения 3 июля", intent="CREATE_BIRTHDAY", person="Оля", bday_text="3 июля")
+    r = say(a, llm, "Запиши день рождения Димы", intent="CREATE_BIRTHDAY", person="Дима")
+    assert r.text == "🎩 Разумеется, Сэр! Какого числа день рождения?"
+    r = say(a, llm, "Через 3 дня", intent="ANSWER", answer="3 июля")
+    assert "Дима — 27 сентября · через 3 дня" in r.text

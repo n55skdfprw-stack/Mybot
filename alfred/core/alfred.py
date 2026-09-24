@@ -68,6 +68,7 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin):
         self.tz = tz
         self._clock = clock
         self._message = ""
+        self._raw_text = ""
 
     # ------------------------------------------------------------------ время
     def now(self) -> datetime:
@@ -176,6 +177,7 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin):
     async def handle_text(self, text: str) -> Reply:
         text = text.strip()
         self._message = text
+        self._raw_text = text  # ровно то, что написал пользователь, без подстановок ИИ
         if search.normalize(text).strip(" .!") in T.CANCEL_WORDS:
             return Reply(T.CANCELLED if self._clear_pending() else T.NOTHING_TO_CANCEL)
         if text in T.MENU_BUTTONS:

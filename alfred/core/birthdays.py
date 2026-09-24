@@ -29,6 +29,11 @@ class BirthdayMixin:
     def _said_birthday(self, r: BrainResult):
         """Дату берём только из слов пользователя. Если ИИ придумал дату, которой в сообщении нет
         («Запиши день рождения Оли» → «послезавтра» из прошлого сообщения), — не верим и переспрашиваем."""
+        # Сначала — последнее сообщение как есть: на вопрос «Какого числа?» ответ «Через 3 дня»
+        # важнее, чем то, что ИИ вписал в ответ (он мог подсмотреть дату из прошлой записи).
+        own = parse_birthday(getattr(self, "_raw_text", ""), self.today())
+        if own:
+            return own
         if self._message:
             return parse_birthday(self._message, self.today())
         return parse_birthday(r.bday_text, self.today())
