@@ -233,7 +233,9 @@ class BirthdayMixin:
             if refusal:
                 return Reply(refusal, edit=edit)
         profile, used = self._gift_profile(b)
-        ideas = await gift_ideas(self.brain.llm, profile)
+        history = self.__dict__.setdefault("_gift_history", {})
+        ideas = await gift_ideas(self.brain.llm, profile, history.get(b.id))
+        history.setdefault(b.id, []).extend(ideas)
         if not ideas:
             return Reply("🎩 Прошу прощения, Сэр! Не удалось придумать — попробуйте чуть позже.",
                          buttons=back, edit=edit)

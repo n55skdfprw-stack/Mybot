@@ -90,7 +90,9 @@ class Admin:
         self.users.add_invite(name)
         return Reply(f"🎩 Приглашение создано, Сэр!\n\n⏳ @{name}\n\nПусть @{name} найдёт меня в Telegram и нажмёт "
                      f"«Start» — я узнаю его по имени и открою доступ.\nЛимит: {self.access.default_limit} сообщений "
-                     "в день (кнопки меню — без ограничений).")
+                     "в день (кнопки меню — без ограничений).",
+                     buttons=[[(f"❌ Отменить приглашение @{name}"[:60], f"adm:uninv:{name}")],
+                              [("👥 Пользователи", "adm:users")]])
 
     def cancel_invite(self, username: str, edit: bool = True) -> Reply:
         name = clean_username(username)

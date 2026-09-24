@@ -7,7 +7,8 @@ from typing import Optional
 from ..core.reply import Reply
 
 SIR, MAM = "Сэр", "Мэм"
-ADDRESS_RE = re.compile(r"(?:обращайся|обращайтесь|зови|называй)\s+(?:ко\s+)?(?:мне|меня)\s+(сэр|мэм)", re.I)
+ADDRESS_RE = re.compile(r"(?:обращайся|обращайтесь|обращаться|зови|зовите|называй|называйте)\s+"
+                        r"(?:ко\s+мне\s+|ко\s+мне,\s*|мне\s+|меня\s+)?(?:как\s+|на\s+)?[«\"]?(сэр|мэм)\b", re.I)
 
 
 def personalize(reply: Reply, address: Optional[str]) -> Reply:

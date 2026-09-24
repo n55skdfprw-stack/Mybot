@@ -247,3 +247,22 @@ def test_gift_ai_down(tmp_path):
     llm.queue.append(LLMError("нет связи"))
     r = run(a.handle_callback_async(f"bd:gift:{a.birthdays.all(a.today())[0].id}"))
     assert r.text.startswith("🎩 Прошу прощения, Сэр! Не удалось придумать")
+
+
+def test_more_ideas_are_different_and_clean(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "x", intent="CREATE_BIRTHDAY", person="Мама", bday_text="12 марта")
+    prompts = []
+    orig = llm.complete
+
+    async def spy(system, user, pro=False):
+        prompts.append(user)
+        return await orig(system, user, pro)
+    llm.complete = spy
+    llm.queue.append("🌸 Живой пион 🌸— символ красоты.\n📚 Книга о садоводстве 📖— для хобби")
+    bid = a.birthdays.all(a.today())[0].id
+    r = run(a.handle_callback_async(f"bd:gift:{bid}"))
+    assert "🌸 Живой пион — символ красоты." in r.text and "📖" not in r.text
+    llm.queue.append("🎟 Билеты в театр — впечатление")
+    run(a.handle_callback_async(f"bd:gift:{bid}"))            # 🔄 Ещё идеи
+    assert "уже предлагал" in prompts[1] and "Живой пион" in prompts[1]

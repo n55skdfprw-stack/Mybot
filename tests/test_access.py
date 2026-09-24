@@ -180,3 +180,19 @@ def test_address_saved(tmp_path):
     assert acc.address is None                      # спросим при первом знакомстве
     access.users.set_address(acc.id, "Мэм")
     assert access.who(777, "olga_k", "Ольга").account.address == "Мэм"
+
+
+def test_address_phrases_live():
+    """Живая ошибка: «Обращайся мэм» и «Обращайся сэр» не срабатывали."""
+    from alfred.ui.address import asked_address
+    for text, want in [("Обращайся мэм", "Мэм"), ("Обращайся сэр", "Сэр"), ("Называй меня Мэм", "Мэм"),
+                       ("Обращайся ко мне Сэр", "Сэр"), ("Обращайтесь ко мне как «Мэм»", "Мэм")]:
+        assert asked_address(text) == want, text
+
+
+def test_invite_has_cancel_button(tmp_path):
+    access, admin, _ = make(tmp_path)
+    r = admin.command("Добавь @test_proverka")
+    assert r.buttons[0] == [("❌ Отменить приглашение @test_proverka", "adm:uninv:test_proverka")]
+    run(admin.callback("adm:uninv:test_proverka"))
+    assert access.users.invites() == []

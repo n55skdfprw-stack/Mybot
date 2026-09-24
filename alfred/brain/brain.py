@@ -78,18 +78,29 @@ GIFT_PROMPT = """Ты — Альфред, заботливый дворецки�
 Без вступления, без заключения, без нумерации и без звёздочек."""
 
 
+EMOJI = r"[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200D]"
+
+
 def clean_ideas(raw: str) -> list[str]:
-    """Убираем нумерацию, звёздочки и лишнее — оставляем до 5 строк идей."""
+    """Убираем нумерацию, звёздочки, лишние значки в середине — оставляем до 5 строк идей."""
     import re
     out = []
     for line in raw.splitlines():
         line = re.sub(r"^[\s>*#\-•]*(?:\d+[.)]\s*)?", "", line).replace("**", "").replace("__", "").strip()
-        if len(line) >= 4:
-            out.append(line[:160])
+        m = re.match(rf"^((?:{EMOJI})+)\s*(.*)$", line)
+        icon, rest = (m.group(1), m.group(2)) if m else ("🎁", line)
+        rest = re.sub(EMOJI, "", rest)                       # «Живой пион 🌸—» → «Живой пион —»
+        rest = re.sub(r"\s*[—–-]\s+", " — ", rest, count=1).strip(" —")
+        rest = re.sub(r"\s{2,}", " ", rest)
+        if len(rest) >= 4:
+            out.append(f"{icon} {rest}"[:160])
     return out[:5]
 
 
-async def gift_ideas(llm: LLMClient, profile: str) -> list[str]:
+async def gift_ideas(llm: LLMClient, profile: str, already: Optional[list[str]] = None) -> list[str]:
+    if already:
+        profile += ("\n\nЭти идеи уже предлагал — придумай 5 СОВСЕМ ДРУГИХ, ни одну не повторяй и не перефразируй:\n"
+                    + "\n".join(already[-15:]))
     try:
         return clean_ideas(await llm.complete(GIFT_PROMPT, profile))
     except LLMError:
