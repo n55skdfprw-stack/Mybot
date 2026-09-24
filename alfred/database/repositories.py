@@ -69,6 +69,11 @@ class Account:
     last_seen: Optional[str]
     created_at: str
     address: Optional[str] = None
+    paused: bool = False
+
+    @property
+    def unlimited(self) -> bool:
+        return self.ai_limit == 0          # 0 — безлимит
 
     @property
     def label(self) -> str:
@@ -77,7 +82,7 @@ class Account:
 
 def _account(r) -> Account:
     return Account(r["id"], r["telegram_id"], r["username"], r["display_name"], r["role"], r["status"],
-                   r["ai_limit"], r["last_seen"], r["created_at"], r["address"])
+                   r["ai_limit"], r["last_seen"], r["created_at"], r["address"], bool(r["paused"]))
 
 
 def clean_username(name: Optional[str]) -> Optional[str]:
@@ -131,6 +136,20 @@ class UserRepository:
     def set_status(self, user_id: int, status: str) -> None:
         with self.db.connect() as conn:
             conn.execute("UPDATE users SET status=?, updated_at=? WHERE id=?", (status, _now(), user_id))
+
+    def set_paused(self, user_id: int, paused: bool) -> None:
+        with self.db.connect() as conn:
+            conn.execute("UPDATE users SET paused=?, updated_at=? WHERE id=?", (int(paused), _now(), user_id))
+
+    def setting(self, key: str) -> Optional[str]:
+        with self.db.connect() as conn:
+            r = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return r["value"] if r else None
+
+    def set_setting(self, key: str, value: Optional[str]) -> None:
+        with self.db.connect() as conn:
+            conn.execute("INSERT INTO settings (key, value) VALUES (?,?) "
+                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
 
     def set_address(self, user_id: int, address: str) -> None:
         with self.db.connect() as conn:

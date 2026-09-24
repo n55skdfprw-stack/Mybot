@@ -32,6 +32,9 @@ def build_router(access: Access, admin: Admin) -> Router:
     # Только личные сообщения: в группах Альфред молчит.
     router.message.filter(F.chat.type == "private")
 
+    def is_word(text: str | None, words: tuple) -> bool:
+        return search.normalize(text or "").strip(" !.") in words
+
     def visitor(user: User) -> Visitor:
         return access.who(user.id, user.username, user.full_name)
 
@@ -48,6 +51,14 @@ def build_router(access: Access, admin: Admin) -> Router:
         if v.kind == "blocked":
             await message.answer(T.BLOCKED, reply_markup=ReplyKeyboardRemove())
             return None
+        if v.kind != "owner" and access.stopped_for_all:
+            return None                              # ⏹ остановлен для всех — гостям молчим
+        if v.account and v.account.paused:
+            if is_word(message.text, T.RESUME_WORDS):
+                access.users.set_paused(v.account.id, False)
+                await send_reply(bot, message.chat.id, Reply(T.RESUMED), owner=v.kind == "owner",
+                                 address=v.account.address)
+            return None                              # ⏸ на паузе — молчим
         if v.kind == "new":
             owner = access.owner
             note = personalize(Reply(f"🎩 Сэр, {v.account.label} принял приглашение и теперь пользуется Альфредом!"),
@@ -76,6 +87,28 @@ def build_router(access: Access, admin: Admin) -> Router:
     @router.message(F.text.func(lambda t: search.normalize(t).strip(" !.") in T.START_WORDS))
     async def on_hello(message: Message, bot: Bot):
         await greet(message, bot)
+
+    @router.message(Command("pause", "resume"))
+    async def on_pause_command(message: Message, bot: Bot):
+        await pause_or_resume(message, bot, message.text.startswith("/pause"))
+
+    @router.message(F.text.func(lambda t: search.normalize(t or "").strip(" !.") in T.PAUSE_WORDS))
+    async def on_pause_words(message: Message, bot: Bot):
+        await pause_or_resume(message, bot, True)
+
+    async def pause_or_resume(message: Message, bot: Bot, pause: bool):
+        if not pause:
+            v = await gate(message, bot)             # на паузе gate сам снимет её по «/resume»
+            if v:
+                await send_reply(bot, message.chat.id, Reply("🎩 Я и так на связи, Сэр!"),
+                                 owner=v.kind == "owner", address=v.account.address)
+            return
+        v = await gate(message, bot)
+        if not v:
+            return
+        access.users.set_paused(v.account.id, True)
+        await send_reply(bot, message.chat.id, Reply(T.PAUSED, buttons=[[("▶️ Продолжить", "pause:off")]]),
+                         owner=v.kind == "owner", address=v.account.address)
 
     @router.message(Command("reset", "clean"))
     async def on_reset(message: Message, bot: Bot):
@@ -125,6 +158,22 @@ def build_router(access: Access, admin: Admin) -> Router:
             return
         owner = v.kind == "owner"
         data = callback.data or ""
+        if not owner and access.stopped_for_all:
+            await callback.answer()
+            return
+        if v.account.paused:
+            await callback.answer()
+            if data == "pause:off":
+                access.users.set_paused(v.account.id, False)
+                if callback.message:
+                    try:
+                        await callback.message.edit_text(personalize(Reply(T.RESUMED), v.account.address).text)
+                    except TelegramBadRequest:
+                        pass
+            return
+        if data == "pause:off":
+            await callback.answer("Альфред и так работает")
+            return
         if data in ("addr:sir", "addr:mam"):
             addr = SIR if data == "addr:sir" else MAM
             access.users.set_address(v.account.id, addr)

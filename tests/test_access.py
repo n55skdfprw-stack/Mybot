@@ -196,3 +196,43 @@ def test_invite_has_cancel_button(tmp_path):
     assert r.buttons[0] == [("❌ Отменить приглашение @test_proverka", "adm:uninv:test_proverka")]
     run(admin.callback("adm:uninv:test_proverka"))
     assert access.users.invites() == []
+
+
+# ---------------------------------------------------------------- 8.4: безлимит, пауза, остановка для всех
+
+def test_unlimited_button(tmp_path):
+    access, admin, llm = make(tmp_path, limit=1)
+    admin.command("добавь @ivan_p")
+    acc = access.who(555, "ivan_p", "Иван").account
+    guest = access.alfred_for(acc)
+    card = admin.user_card(acc.id)
+    assert ("♾ Безлимит", f"adm:unl:{acc.id}:1") in card.buttons[1]
+    card = run(admin.callback(f"adm:unl:{acc.id}:1"))
+    assert "∞ (безлимит)" in card.text and card.buttons[0] == [("🔢 Вернуть лимит 1", f"adm:unl:{acc.id}:0")]
+    for _ in range(5):
+        llm.said(intent="CREATE_NOTE", content="Идея")
+        assert "лимит" not in run(guest.handle_text("Идея")).text
+    assert "👤 @ivan_p · сегодня 5/∞" in admin.users_view().text
+    run(admin.callback(f"adm:unl:{acc.id}:0"))
+    assert "лимит сообщений исчерпан (1)" in run(guest.handle_text("Идея")).text
+    r = admin.command("безлимит для @ivan_p")
+    assert r.text == "🎩 Готово, Сэр!\n\n♾ @ivan_p: безлимит на сообщения ИИ"
+
+
+def test_pause_and_stop_for_all(tmp_path):
+    access, admin, _ = make(tmp_path)
+    admin.command("добавь @ivan_p")
+    acc = access.who(555, "ivan_p", "Иван").account
+    everyone = {access.owner.id, acc.id}
+    assert {a.id for a, _ in access.active()} == everyone
+    access.users.set_paused(acc.id, True)                  # гость сам поставил паузу
+    assert {a.id for a, _ in access.active()} == {access.owner.id}
+    assert "⏸ сам поставил паузу" in admin.user_card(acc.id).text
+    access.users.set_paused(acc.id, False)
+    r = run(admin.system_view())
+    assert r.buttons[1] == [("⏹ Остановить для всех", "adm:stopall")]
+    r = run(admin.callback("adm:stopall"))
+    assert access.active() == [] and "⏹ Альфред остановлен для всех" in r.text
+    assert r.buttons[1] == [("▶️ Запустить для всех", "adm:startall")]
+    run(admin.callback("adm:startall"))
+    assert {a.id for a, _ in access.active()} == everyone

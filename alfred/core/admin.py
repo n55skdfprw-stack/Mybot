@@ -18,6 +18,7 @@ INVITE_RE = re.compile(rf"(?:добав\w*|пригласи\w*|дай досту
 BLOCK_RE = re.compile(rf"(?:заблокир\w*|закрой доступ\w*|отключи\w*)\s+(?:для\s+)?{NAME}")
 UNBLOCK_RE = re.compile(rf"(?:разблокир\w*|открой доступ\w*|верни доступ\w*)\s+(?:для\s+)?{NAME}")
 DELETE_RE = re.compile(rf"(?:удали\w*|убери\w*)\s+(?:пользовател\w*\s+)?{NAME}")
+UNLIMITED_RE = re.compile(rf"(?:безлимит\w*|без\s+лимита)\s+(?:для\s+)?{NAME}|{NAME}\s+(?:безлимит\w*|без\s+лимита)")
 LIMIT_RE = re.compile(rf"(?:лимит\w*\s+(?:для\s+)?{NAME}\D+(\d{{1,4}})|{NAME}\s+лимит\w*\D+(\d{{1,4}}))")
 
 
@@ -58,6 +59,13 @@ class Admin:
         m = INVITE_RE.search(t)
         if m:
             return self.invite(m.group(1))
+        m = UNLIMITED_RE.search(t)
+        if m:
+            acc = self._find(m.group(1) or m.group(2))
+            if not acc:
+                return Reply(f"🎩 Сэр, пользователя @{m.group(1) or m.group(2)} у меня нет!")
+            self.users.set_limit(acc.id, 0)
+            return Reply(f"🎩 Готово, Сэр!\n\n♾ {acc.label}: безлимит на сообщения ИИ")
         m = LIMIT_RE.search(t)
         if m:
             name, value = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
@@ -124,7 +132,8 @@ class Admin:
         if acc.status == "blocked":
             return f"⛔ {acc.label} · доступ закрыт"
         used = self.users.usage(acc.id, self._today())
-        return f"👤 {acc.label} · сегодня {used}/{self.access.limit_of(acc)} · был {self._seen(acc.last_seen)}"
+        limit = "∞" if acc.unlimited else self.access.limit_of(acc)
+        return f"👤 {acc.label} · сегодня {used}/{limit} · был {self._seen(acc.last_seen)}"
 
     def users_view(self, edit: bool = False) -> Reply:
         accounts = self.users.accounts()
@@ -139,15 +148,21 @@ class Admin:
         acc = self.users.by_id(user_id)
         if not acc or acc.role == "owner":
             return self.users_view(edit=edit)
-        limit = self.access.limit_of(acc)
+        limit = "∞ (безлимит)" if acc.unlimited else self.access.limit_of(acc)
         state = "✅ доступ открыт" if acc.status == "active" else "⛔ доступ закрыт (данные сохранены)"
+        if acc.paused:
+            state += " · ⏸ сам поставил паузу"
         joined = datetime.fromisoformat(acc.created_at)
         text = (f"🎩 {acc.label}, Сэр!\n\n👤 Пользователь · {state}\n"
                 f"📅 С нами с {joined.day} {T.MONTHS_GEN[joined.month - 1]}\n"
                 f"👀 Последний раз: {self._seen(acc.last_seen)}\n"
                 f"🤖 Сообщений ИИ: сегодня {self.users.usage(acc.id, self._today())} из {limit} · "
                 f"всего {self.users.usage_total(acc.id)}")
-        rows = [[("➖ Лимит −10", f"adm:lim:{acc.id}:-10"), ("➕ Лимит +10", f"adm:lim:{acc.id}:10")]]
+        if acc.unlimited:
+            rows = [[(f"🔢 Вернуть лимит {self.access.default_limit}", f"adm:unl:{acc.id}:0")]]
+        else:
+            rows = [[("➖ Лимит −10", f"adm:lim:{acc.id}:-10"), ("➕ Лимит +10", f"adm:lim:{acc.id}:10")],
+                    [("♾ Безлимит", f"adm:unl:{acc.id}:1")]]
         if acc.status == "active":
             rows.append([("⛔ Закрыть доступ (данные останутся)", f"adm:block:{acc.id}")])
         else:
@@ -188,7 +203,13 @@ class Admin:
                 f"👥 Пользователей: {len(guests)} · приглашений: {len(self.users.invites())}\n"
                 f"📊 Сообщений ИИ сегодня: вы — {owner_used}, гости — {guests_used}\n"
                 f"🔢 Лимит для гостей по умолчанию: {self.access.default_limit} в день")
-        return Reply(text, buttons=[[("🔄 Обновить", "adm:sys"), ("👥 Пользователи", "adm:users")]], edit=edit)
+        if self.access.stopped_for_all:
+            text += ("\n\n⏹ Альфред остановлен для всех: никому ничего не пишет, гостям не отвечает. "
+                     "Вам — отвечает, чтобы можно было запустить обратно.")
+            stop = [("▶️ Запустить для всех", "adm:startall")]
+        else:
+            stop = [("⏹ Остановить для всех", "adm:stopall")]
+        return Reply(text, buttons=[[("🔄 Обновить", "adm:sys"), ("👥 Пользователи", "adm:users")], stop], edit=edit)
 
     # ------------------------------------------------------------ кнопки
     async def callback(self, data: str) -> Reply:
@@ -205,9 +226,15 @@ class Admin:
             return self.user_card(num)
         if action == "lim" and num and len(parts) > 3:
             acc = self.users.by_id(num)
-            if acc:
+            if acc and not acc.unlimited:
                 self.users.set_limit(acc.id, max(10, self.access.limit_of(acc) + int(parts[3])))
             return self.user_card(num)
+        if action == "unl" and num and len(parts) > 3:
+            self.users.set_limit(num, 0 if parts[3] == "1" else None)   # None — лимит по умолчанию
+            return self.user_card(num)
+        if action in ("stopall", "startall"):
+            self.access.stop_for_all(action == "stopall")
+            return await self.system_view(edit=True)
         if action in ("block", "open") and num:
             self.users.set_status(num, "blocked" if action == "block" else "active")
             return self.user_card(num)

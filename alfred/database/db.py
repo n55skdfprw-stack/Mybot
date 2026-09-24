@@ -8,7 +8,7 @@ from typing import Iterator
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS users (
     status TEXT NOT NULL DEFAULT 'active',   -- active / blocked
     ai_limit INTEGER,                -- запросов к ИИ в день; NULL — по умолчанию
     address TEXT,                    -- как обращаться: «Сэр» или «Мэм»; NULL — ещё не спросили
+    paused INTEGER NOT NULL DEFAULT 0,  -- 1: «⏸ Пауза» — Альфред молчит для этого человека
     last_seen TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -240,6 +241,11 @@ CREATE TABLE IF NOT EXISTS ai_usage (
     PRIMARY KEY (user_id, day)
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,            -- например, stopped_for_all
+    value TEXT
+);
+
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 """
 
@@ -292,7 +298,8 @@ class Database:
             ucols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
             for col, ddl in (("username", "TEXT"), ("display_name", "TEXT"),
                              ("role", "TEXT NOT NULL DEFAULT 'user'"), ("status", "TEXT NOT NULL DEFAULT 'active'"),
-                             ("ai_limit", "INTEGER"), ("last_seen", "TEXT"), ("address", "TEXT")):
+                             ("ai_limit", "INTEGER"), ("last_seen", "TEXT"), ("address", "TEXT"),
+                             ("paused", "INTEGER NOT NULL DEFAULT 0")):
                 if col not in ucols:
                     conn.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
             row = conn.execute("SELECT version FROM schema_version").fetchone()

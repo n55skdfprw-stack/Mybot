@@ -106,7 +106,7 @@ class Access:
         def check() -> Optional[str]:
             acc = self.users.by_id(user_id)
             day = alfred.today().isoformat()
-            if acc and acc.role != "owner":
+            if acc and acc.role != "owner" and not acc.unlimited:
                 limit = self.limit_of(acc)
                 if self.users.usage(user_id, day) >= limit:
                     return (f"🎩 Прошу прощения, Сэр! На сегодня лимит сообщений исчерпан ({limit}).\n\n"
@@ -118,6 +118,17 @@ class Access:
     def limit_of(self, acc: Account) -> int:
         return acc.ai_limit if acc.ai_limit is not None else self.default_limit
 
+    # ------------------------------------------------------------ пауза и остановка
+    @property
+    def stopped_for_all(self) -> bool:
+        return self.users.setting("stopped_for_all") == "1"
+
+    def stop_for_all(self, stopped: bool) -> None:
+        self.users.set_setting("stopped_for_all", "1" if stopped else "0")
+
     def active(self) -> list[tuple[Account, Alfred]]:
-        """Все, кому Альфред сейчас служит (для утренних сводок и напоминаний)."""
-        return [(acc, self.alfred_for(acc)) for acc in self.users.accounts() if acc.status == "active"]
+        """Кому сейчас слать сводки и напоминания: не на паузе, доступ открыт, Альфред не остановлен для всех."""
+        if self.stopped_for_all:
+            return []
+        return [(acc, self.alfred_for(acc)) for acc in self.users.accounts()
+                if acc.status == "active" and not acc.paused]
