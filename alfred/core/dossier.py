@@ -182,9 +182,7 @@ class DossierMixin:
                 return self.dossier_view(edit=True)
             self.dossier.remove(card)
             self._set_last("person", None)
-            kept = self.dossier.get(num) is not None
-            note = "\n\nДень рождения и долги остались на месте." if kept else ""
-            return Reply(f"🎩 Удалил досье, Сэр!\n\n❌ {card.full_name}{note}", edit=True)
+            return Reply(f"🎩 Удалил досье, Сэр!\n\n❌ {card.full_name}", edit=True)
         if action in ("yes", "no"):
             ctx = self._ctx()
             if not (ctx.intent and ctx.data.get("choose") == "dossier_create"):

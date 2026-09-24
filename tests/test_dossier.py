@@ -98,7 +98,7 @@ def test_delete_keeps_birthday_and_debt(tmp_path):
     r = say(a, llm, "Удали досье Сергея", intent="DELETE_PERSON", person="Сергей")
     assert r.text == "🎩 Сэр, вы действительно хотите удалить всё досье: Сергей?"
     r = a.handle_callback(r.buttons[0][0][1])
-    assert "День рождения и долги остались на месте" in r.text
+    assert r.text == "🎩 Удалил досье, Сэр!\n\n❌ Сергей"
     assert a.dossier.all() == []
     assert len(a.debts.active()) == 1 and len(a.birthdays.all(a.today())) == 1
     # снова пишем о нём — досье возвращается, без старых сведений
@@ -111,7 +111,7 @@ def test_delete_person_without_links_is_gone(tmp_path):
     a, llm = make(tmp_path)
     say(a, llm, "x", intent="CREATE_PERSON", person="Анна")
     r = a.handle_callback("dos:delyes:" + str(a.dossier.all()[0].id))
-    assert "остались" not in r.text and a.debts.people.all(a.user_id) == []
+    assert a.debts.people.all(a.user_id) == []
 
 
 def test_phone_as_note_becomes_dossier(tmp_path):
