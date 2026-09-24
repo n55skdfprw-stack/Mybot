@@ -25,7 +25,7 @@ def test_parse_dates():
     assert parse_birthday("05.05.98", TODAY) == (5, 5, 1998)
     assert parse_birthday("не 12, а 14 марта", TODAY) == (14, 3, None)
     assert parse_birthday("31 апреля", TODAY) is None
-    assert parse_birthday("завтра", TODAY) is None
+    assert parse_birthday("когда-нибудь", TODAY) is None
 
 
 def test_create_and_list_sorted(tmp_path):
@@ -144,3 +144,31 @@ def test_feb_29_in_normal_year(tmp_path):
     say(a, llm, "x", intent="CREATE_BIRTHDAY", person="Лёша", bday_text="29 февраля 2000")
     at(a, date(2027, 2, 28))
     assert "Сегодня:\nЛёша — 27 лет" in a.birthday_reminder().text
+
+
+# ---------------------------------------------------------------- версия 4.1: «завтра», «через неделю»
+
+def test_parse_relative():
+    assert parse_birthday("завтра", TODAY) == (25, 9, None)
+    assert parse_birthday("через неделю", TODAY) == (1, 10, None)
+    assert parse_birthday("сегодня", TODAY) == (24, 9, None)
+    assert parse_birthday("через 3 дня", TODAY) == (27, 9, None)
+
+
+def test_birthday_tomorrow_and_in_a_week(tmp_path):
+    a, llm = make(tmp_path)
+    r = say(a, llm, "Игорь день рождения завтра", intent="CREATE_BIRTHDAY", person="Игорь", bday_text="завтра")
+    assert r.text == "🎩 Записал, Сэр!\n\n🎂 Игорь — 25 сентября · завтра"
+    # ИИ не переписал слова о дате — Альфред берёт их из сообщения
+    r = say(a, llm, "Виктор день рождения через неделю", intent="CREATE_BIRTHDAY", person="Виктор")
+    assert r.text == "🎩 Записал, Сэр!\n\n🎂 Виктор — 1 октября · через 7 дней"
+    r = say(a, llm, "Сегодня у Олега день рождения", intent="CREATE_EVENT", event_when="сегодня", person="Олег")
+    assert "🥳 Олег — 24 сентября · сегодня" in r.text
+
+
+def test_answer_relative_date(tmp_path):
+    a, llm = make(tmp_path)
+    r = say(a, llm, "Запиши день рождения Пети", intent="CREATE_BIRTHDAY", person="Петя")
+    assert r.text == "🎩 Разумеется, Сэр! Какого числа день рождения?"
+    r = say(a, llm, "Послезавтра", intent="UNKNOWN")
+    assert "Петя — 26 сентября · послезавтра" in r.text

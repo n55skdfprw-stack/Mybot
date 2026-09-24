@@ -5,6 +5,7 @@ import re
 from datetime import date
 from typing import Optional
 
+from ..brain.dates import find_dates
 from ..database.birthday_repo import Birthday, BirthdayRepository
 from .tasks import VerificationError
 
@@ -49,7 +50,14 @@ def parse_birthday(text: Optional[str], today: date) -> Optional[tuple[int, int,
         if _valid(day, month, year):
             found.append((m.start(), (day, month, year)))
     # «Не 12, а 14 марта»: первое число без месяца берёт месяц у второго — нам нужно последнее.
-    return sorted(found)[-1][1] if found else None
+    if found:
+        return sorted(found)[-1][1]
+    # «Завтра», «через неделю», «послезавтра», «через 3 дня» — считаем дату от сегодня.
+    relative = find_dates(text, today)
+    if relative:
+        d = relative[-1]
+        return d.day, d.month, None
+    return None
 
 
 def next_date(b: Birthday, today: date) -> date:
