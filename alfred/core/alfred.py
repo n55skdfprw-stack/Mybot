@@ -178,9 +178,13 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
         return Reply(T.greeting(self.now()))
 
     def reset_request(self) -> Reply:
-        return Reply("🎩 Сэр, вы действительно хотите удалить ВСЁ: дела, заметки и весь распорядок?\n\n"
-                     "Вернуть данные будет невозможно!",
-                     buttons=[[("🗑 Да, удалить всё", "confirm:reset_all")], [("↩️ Нет, оставить", "confirm:no")]])
+        """🧹 Чистый лист — удалить всё сразу, только после подтверждения."""
+        self._clear_pending()
+        return Reply("🎩 Сэр, начать с чистого листа?\n\n🧹 Будет удалено ВСЁ:\n📋 дела\n🕰️ распорядок дня\n📝 заметки\n"
+                     "💰 расходы, доходы и долги\n🎂 дни рождения\n🗂️ досье\n🩺 медкарта (болезни, лекарства, "
+                     "аллергии, врачи)\n\nВернуть данные будет невозможно!",
+                     buttons=[[("🧹 Да, начать с чистого листа", "confirm:reset_all")],
+                              [("↩️ Нет, оставить", "confirm:no")]])
 
     def open_section(self, button: str) -> Reply:
         self._clear_pending()
@@ -206,6 +210,8 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
         self._raw_text = text  # ровно то, что написал пользователь, без подстановок ИИ
         if search.normalize(text).strip(" .!") in T.CANCEL_WORDS:
             return Reply(T.CANCELLED if self._clear_pending() else T.NOTHING_TO_CANCEL)
+        if re.fullmatch(r"(?:🧹\s*)?чистый лист[.!]*", search.normalize(text).strip()):
+            return self.reset_request()
         if text == T.MENU_WEATHER:
             self._clear_pending()
             return await self.weather_view()
@@ -760,9 +766,13 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
             if parts[1] == "reset_all":
                 self.schedule.events.db.wipe_user_data(self.user_id)
                 left = (self.tasks.active() or self.notes.all() or
-                        self.schedule.between(date(2000, 1, 1), date(2100, 1, 1)))
+                        self.schedule.between(date(2000, 1, 1), date(2100, 1, 1)) or
+                        self.finance.latest(None, 1) or self.debts.active() or
+                        self.birthdays.all(self.today()) or self.dossier.all() or
+                        self.med.cases() or self.med.allergies() or self.med.contacts())
                 if left:
                     raise VerificationError("wipe failed")
+                self._clear_pending()
                 return Reply("🎩 Готово, Сэр! Всё очищено, начинаем с чистого листа!", edit=True)
             if parts[1] == "del_all_tasks":
                 self.tasks.delete(self.tasks.active())

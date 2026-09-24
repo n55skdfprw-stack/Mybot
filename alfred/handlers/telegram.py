@@ -32,7 +32,7 @@ def build_router(alfred: Alfred, owner_id: int) -> Router:
         reply = alfred.start()
         await message.answer(reply.text, reply_markup=main_menu())
 
-    @router.message(Command("reset"))
+    @router.message(Command("reset", "clean"))
     async def on_reset(message: Message):
         reply = alfred.reset_request()
         await message.answer(reply.text, reply_markup=inline(reply.buttons))

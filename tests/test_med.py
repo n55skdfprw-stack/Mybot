@@ -167,3 +167,28 @@ def test_allergy_when_ai_left_it_empty(tmp_path):
     assert r.text == "🎩 Готово, Сэр! Убрал из аллергий: Пенициллин"
     r = say(a, llm, "Какие у меня аллергии?", intent="MED_ALLERGY", med={})
     assert "⚠️ Непереносимость лактозы" in r.text
+
+
+def test_clean_sheet_wipes_everything(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, TEXT, intent="MED_CASE", med=ANGINA)
+    say(a, llm, "x", intent="MED_ALLERGY", med={"allergy": "орехи"})
+    say(a, llm, "x", intent="MED_CONTACT", med={"contact": {"name": "Иванова", "specialty": "терапевт"}})
+    say(a, llm, "Купить молоко", intent="CREATE_TASK", title="Купить молоко")
+    say(a, llm, "Идея: бот", intent="CREATE_NOTE", content="Идея: бот")
+    say(a, llm, "Потратил 500 на такси", intent="CREATE_EXPENSE", amount_text="500", category="такси")
+    say(a, llm, "Сергей должен мне 5000", intent="CREATE_DEBT", person="Сергей", direction="owes_me",
+        amount_text="5000")
+    say(a, llm, "x", intent="CREATE_BIRTHDAY", person="Мама", bday_text="12 марта")
+    say(a, llm, "x", intent="CREATE_PERSON", person="Анна")
+    r = run(a.handle_text("Чистый лист"))
+    assert r.text.startswith("🎩 Сэр, начать с чистого листа?") and "🩺 медкарта" in r.text
+    assert a.tasks.active()                                   # без подтверждения ничего не удалено
+    r = a.handle_callback("confirm:no")
+    assert a.tasks.active() and a.med.cases()
+    run(a.handle_text("чистый лист!"))
+    r = a.handle_callback("confirm:reset_all")
+    assert r.text == "🎩 Готово, Сэр! Всё очищено, начинаем с чистого листа!"
+    assert not (a.tasks.active() or a.notes.all() or a.finance.latest(None, 5) or a.debts.active()
+                or a.birthdays.all(a.today()) or a.dossier.all() or a.med.cases() or a.med.allergies()
+                or a.med.contacts())

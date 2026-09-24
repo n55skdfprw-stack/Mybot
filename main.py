@@ -60,7 +60,8 @@ async def main() -> None:
         log.error("Курсы ЦБ НЕ доступны с этого сервера — пересчёт валют работать не будет.")
 
     bot = Bot(token=config.telegram_token)
-    await bot.set_my_commands([BotCommand(command="start", description="Меню Альфреда")])
+    await bot.set_my_commands([BotCommand(command="start", description="Меню Альфреда"),
+                               BotCommand(command="clean", description="🧹 Чистый лист — удалить всё")])
     dp = build_dispatcher(alfred, config.owner_id)
 
     scheduler = build_scheduler(bot, alfred, config.owner_id)
