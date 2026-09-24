@@ -6,7 +6,7 @@
 
 import logging
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from ..brain.dates import MONTHS, _norm, parse_date
@@ -325,13 +325,67 @@ class FinanceMixin:
     def _show_balance(self, r: BrainResult) -> Reply:
         return Reply(f"🎩 Ваш остаток, Сэр: {F.money(self.finance.balance())}!")
 
+    # ------------------------------------------------------------ группы записей
+    @staticmethod
+    def _group_key(o: Operation) -> tuple:
+        return (o.date, o.type, o.category or ("Доход" if o.type == "income" else "Прочее"))
+
+    def _groups(self, op_type: str, limit: int = 60) -> list[list[Operation]]:
+        """Записи одного дня и одной категории — в одну группу (две поездки на автобусе = одна строка)."""
+        groups: dict[tuple, list[Operation]] = {}
+        for o in self.finance.latest(op_type, limit):
+            groups.setdefault(self._group_key(o), []).append(o)
+        return list(groups.values())
+
+    def _op_time(self, o: Operation) -> str:
+        try:
+            dt = datetime.fromisoformat(o.created_at)
+            return dt.astimezone(self.tz).strftime("%H:%M")
+        except (TypeError, ValueError):
+            return "—"
+
+    @staticmethod
+    def group_line(ops: list[Operation]) -> str:
+        o = ops[0]
+        total = sum(x.amount for x in ops)
+        day = f"{o.date.day} {F.MONTHS_GEN[o.date.month - 1][:3]}"
+        sign = "−" if o.type == "expense" else "+"
+        what = o.category or o.description or ("Доход" if o.type == "income" else "Расход")
+        icon = F.emoji(o.category) if o.type == "expense" else "💵"
+        count = f" ×{len(ops)}" if len(ops) > 1 else ""
+        return f"{icon} {day} · {what} · {sign}{F.money(total)}{count}"
+
     def ops_list_view(self, op_type: str, edit: bool = False) -> Reply:
-        ops = self.finance.latest(op_type, 15)
+        groups = self._groups(op_type)
         kind = "расходы" if op_type == "expense" else "доходы"
-        if not ops:
+        if not groups:
             return Reply(f"🎩 Сэр, {kind} пока не записаны!", buttons=FIN_BUTTONS, edit=edit)
-        lines = "\n".join(F.op_line(o) for o in ops)
-        return Reply(f"🎩 Последние {kind}, Сэр!\n\n{lines}", buttons=FIN_BUTTONS, edit=edit)
+        rows = [[(self.group_line(g), f"fin:grp:{g[0].id}")] for g in groups[:12]]
+        rows.append([("↩️ Назад", "fin:stats")])
+        return Reply(f"🎩 Последние {kind}, Сэр!", buttons=rows, edit=edit)
+
+    def group_view(self, op_id: int, edit: bool = True) -> Reply:
+        op = self.finance.get(op_id)
+        if not op:
+            return self.ops_list_view("expense", edit=edit)
+        key = self._group_key(op)
+        ops = [o for o in self.finance.between(op.date, op.date, op.type) if self._group_key(o) == key]
+        ops.sort(key=lambda o: o.created_at)
+        back = "fin:exp" if op.type == "expense" else "fin:inc"
+        if not ops:
+            return self.ops_list_view(op.type, edit=edit)
+        sign = "−" if op.type == "expense" else "+"
+        lines = []
+        for o in ops:
+            orig = f" ({F.money(o.original_amount, o.original_currency)})" if o.original_currency else ""
+            note = f" — {o.description}" if o.description and o.description.lower() != (key[2] or "").lower() else ""
+            lines.append(f"🕐 {self._op_time(o)} — {sign}{F.money(o.amount)}{orig}{note}")
+        icon = F.emoji(op.category) if op.type == "expense" else "💵"
+        day = f"{op.date.day} {F.MONTHS_GEN[op.date.month - 1]}"
+        head = f"🎩 {icon} {key[2]}, {day} — {F.money(sum(o.amount for o in ops))}, Сэр!"
+        rows = [[(f"❌ {self._op_time(o)} — {F.money(o.amount)}", f"fin:grpdel:{o.id}")] for o in ops[:10]]
+        rows.append([("↩️ Назад", back)])
+        return Reply(head + "\n\n" + "\n".join(lines), buttons=rows, edit=edit)
 
     def edit_list_view(self, edit: bool = True) -> Reply:
         ops = self.finance.latest(None, 8)
@@ -576,6 +630,17 @@ class FinanceMixin:
                          buttons=FIN_BUTTONS, edit=True)
         if action == "edit":
             return self.edit_list_view()
+        if action == "grp" and len(parts) == 3 and parts[2].isdigit():
+            return self.group_view(int(parts[2]))
+        if action == "grpdel" and len(parts) == 3 and parts[2].isdigit():
+            op = self.finance.get(int(parts[2]))
+            if not op:
+                return self.ops_list_view("expense", edit=True)
+            key = self._group_key(op)
+            rest = [o for o in self.finance.between(op.date, op.date, op.type)
+                    if self._group_key(o) == key and o.id != op.id]
+            self.finance.delete([op])
+            return self.group_view(rest[0].id) if rest else self.ops_list_view(op.type, edit=True)
         if action == "deldebt" and len(parts) == 3 and parts[2].isdigit():
             debt = self.debts.by_id(int(parts[2]))
             person = self.debts.person(debt.person_id) if debt else None

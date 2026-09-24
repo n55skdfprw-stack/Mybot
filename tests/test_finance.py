@@ -445,3 +445,23 @@ def test_question_after_pending_still_works(tmp_path):
     r = say(a, llm, "Сколько я потратил на такси за месяц?", intent="SEARCH_FINANCE", category="такси",
             period_text="за месяц")
     assert "за месяц" in r.text
+
+
+# ---------------------------------------------------------------- версия 3.6: группы
+
+def test_same_day_same_category_grouped(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "Потратил 80 на автобус", intent="CREATE_EXPENSE", amount_text="80", category="автобус")
+    say(a, llm, "Потратил 500 на такси", intent="CREATE_EXPENSE", amount_text="500", category="такси")
+    say(a, llm, "Потратил 80 на автобус", intent="CREATE_EXPENSE", amount_text="80", category="автобус")
+    r = a.handle_callback("fin:exp")
+    labels = [row[0][0] for row in r.buttons]
+    assert any("Транспорт · −160 ₽ ×2" in l for l in labels), labels
+    assert any("Такси · −500 ₽" in l and "×" not in l for l in labels), labels
+    grp = next(row[0][1] for row in r.buttons if "Транспорт" in row[0][0])
+    r = a.handle_callback(grp)
+    assert "Транспорт" in r.text and "160 ₽" in r.text
+    assert r.text.count("🕐") == 2 and r.text.count("−80 ₽") == 2
+    # удаляем одну поездку прямо из группы
+    r = a.handle_callback(r.buttons[0][0][1])
+    assert r.text.count("🕐") == 1

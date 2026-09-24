@@ -525,3 +525,27 @@ def test_task_with_date_keeps_date(tmp_path):
     llm.said(intent="CREATE_TASK", title="Заправить кровать", due_when="сегодня")
     r = run(a.handle_text("Сегодня заправить кровать"))
     assert a.tasks.active()[0].due_date == date(2026, 9, 23) and "сегодня" in r.text
+
+
+# ---------------------------------------------------------------- версия 3.6: дела кнопками
+
+def test_tasks_compact_toggle_and_list(tmp_path):
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_TASK", title="Выкинуть мусор")
+    llm.said(intent="CREATE_TASK", title="Позвонить папе", due_when="завтра")
+    run(a.handle_text("Выкинуть мусор")); run(a.handle_text("Позвонить папе завтра"))
+    v = a.tasks_view()
+    labels = [row[0][0] for row in v.buttons]
+    assert "⭕ Выкинуть мусор" in labels and "⭕ Позвонить папе · завтра" in labels
+    assert labels[-1] == "📋 Посмотреть список"
+    trash = next(row[0][1] for row in v.buttons if row[0][0] == "⭕ Выкинуть мусор")
+    v = a.handle_callback(trash)                       # отметили мусор
+    labels = [row[0][0] for row in v.buttons]
+    assert "🟢 Выкинуть мусор" in labels and "⭕ Выкинуть мусор" not in labels
+    lst = a.handle_callback("task:list")
+    assert "⭕ Не сделано:\nПозвонить папе — завтра" in lst.text
+    assert "🟢 Сделано сегодня:\nВыкинуть мусор" in lst.text
+    v = a.handle_callback("task:open")
+    undo = next(row[0][1] for row in v.buttons if row[0][0] == "🟢 Выкинуть мусор")
+    v = a.handle_callback(undo)                        # вернули
+    assert "⭕ Выкинуть мусор" in [row[0][0] for row in v.buttons]

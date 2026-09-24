@@ -426,14 +426,31 @@ class Alfred(ScheduleMixin, FinanceMixin):
         return Reply(f"🎩 Удалил, Сэр! Дела «{task.title}» больше нет в списке!")
 
     def tasks_view(self, edit: bool = False, toast: Optional[str] = None) -> Reply:
-        active = self.tasks.active()
+        """Компактный список: каждое дело — кнопка. ⭕ — нажми, чтобы отметить; 🟢 — нажми, чтобы вернуть."""
         today = self.today()
-        if not active:
+        active = self.tasks.active()
+        done = [t for t in self.tasks.done_today(today) if t.completed]
+        if not active and not done:
             return Reply("🎩 Список дел пуст, Сэр! Можно выдохнуть!", edit=edit, toast=toast)
-        lines = "\n".join(T.task_line(t, today) for t in active)
-        text = f"🎩 Ваши дела, Сэр!\n\n{lines}"
-        rows = [[("✅ " + T.short(t.title), f"task:done:{t.id}")] for t in active[:20]]
+        rows = [[("⭕ " + T.short(t.title, 34) + T.due_label(t.due_date, today).replace(" — ", " · "),
+                  f"task:done:{t.id}")] for t in active[:20]]
+        rows += [[("🟢 " + T.short(t.title, 34), f"task:undo:{t.id}")] for t in done[:10]]
+        rows.append([("📋 Посмотреть список", "task:list")])
+        text = "🎩 Ваши дела, Сэр!" if active else "🎩 Все дела сделаны, Сэр! Великолепно!"
         return Reply(text, buttons=rows, edit=edit, toast=toast)
+
+    def tasks_list_view(self, edit: bool = True) -> Reply:
+        """Список для просмотра: что осталось и что уже сделано сегодня."""
+        today = self.today()
+        active = self.tasks.active()
+        done = [t for t in self.tasks.done_today(today) if t.completed]
+        parts = []
+        if active:
+            parts.append("⭕ Не сделано:\n" + "\n".join(T.task_line(t, today)[2:] for t in active))
+        if done:
+            parts.append("🟢 Сделано сегодня:\n" + "\n".join(T.short(t.title, 60) for t in done))
+        body = "\n\n".join(parts) or "Дел нет!"
+        return Reply(f"🎩 Ваш список дел, Сэр!\n\n{body}", buttons=[[("↩️ К отметкам", "task:open")]], edit=edit)
 
     # ------------------------------------------------------------------ заметки
     def _resolve_notes(self, r: BrainResult) -> list[Note]:
@@ -548,12 +565,21 @@ class Alfred(ScheduleMixin, FinanceMixin):
         parts = data.split(":")
         kind = parts[0]
 
+        if data == "task:list":
+            return self.tasks_list_view()
+        if data == "task:open":
+            return self.tasks_view(edit=True)
+        if kind == "task" and len(parts) == 3 and parts[2].isdigit() and parts[1] == "undo":
+            task = self.tasks.get(int(parts[2]))
+            if task and task.completed:
+                self.tasks.restore(task)
+            return self.tasks_view(edit=True, toast="Вернул в список ⭕")
         if kind == "task" and len(parts) == 3 and parts[2].isdigit():
             task = self.tasks.get(int(parts[2]))
             if parts[1] == "done":
                 if task and not task.completed:
                     self.tasks.complete([task], self.now())
-                return self.tasks_view(edit=True, toast="Выполнено ✅")
+                return self.tasks_view(edit=True, toast="Выполнено 🟢")
             if parts[1] == "drop":
                 if task:
                     self.tasks.delete([task])
