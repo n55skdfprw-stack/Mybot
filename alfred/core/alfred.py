@@ -112,6 +112,12 @@ class Alfred(ScheduleMixin, FinanceMixin):
             op = self.finance.get(ctx.entity_id)
             if op:
                 return f"финансовая запись: {F.op_line(op)}"
+        if ctx.entity_type == "debt" and ctx.entity_id:
+            d = self.debts.by_id(ctx.entity_id)
+            p = self.debts.person(d.person_id) if d else None
+            if d and p:
+                who = f"{p.full_name} должен пользователю" if d.direction == "owes_me" else f"пользователь должен {p.full_name}"
+                return f"долг: {who} {F.money(d.amount)}"
         if ctx.entity_type == "event" and ctx.entity_id:
             e = self.schedule.get(ctx.entity_id)
             if e:
@@ -257,6 +263,7 @@ class Alfred(ScheduleMixin, FinanceMixin):
             "SHOW_STATISTICS": self._show_statistics,
             "SHOW_BALANCE": self._show_balance,
             "CREATE_DEBT": self._create_debt,
+            "UPDATE_DEBT": self._update_debt,
             "REPAY_DEBT": self._repay_debt,
             "DELETE_DEBT": self._delete_debt,
             "SHOW_DEBTS": self._show_debts,
@@ -558,6 +565,14 @@ class Alfred(ScheduleMixin, FinanceMixin):
                     return Reply("🎩 Сэр, этой записи уже нет!", edit=True)
                 action = {"UPDATE_FINANCE": self._update_finance, "DELETE_FINANCE": self._delete_finance}[r.intent]
                 return replace(action(r, chosen=op), edit=True)
+            if ctx.data["choose"] == "debt":
+                debt = self.debts.by_id(obj_id)
+                if not debt:
+                    return Reply("🎩 Сэр, этого долга уже нет!", edit=True)
+                action = {"UPDATE_DEBT": self._update_debt, "DELETE_DEBT": self._delete_debt}.get(r.intent)
+                if not action:
+                    return Reply(T.CANCELLED, edit=True)
+                return replace(action(r, chosen=debt), edit=True)
             if ctx.data["choose"] == "person":
                 person = self.debts.person(obj_id)
                 if not person:

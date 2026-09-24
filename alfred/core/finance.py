@@ -12,7 +12,7 @@ from typing import Optional
 from ..brain.dates import MONTHS, _norm, parse_date
 from ..brain.money import VAGUE, parse_amount, parse_conversion, parse_currency, parse_period
 from ..brain.parser import BrainResult
-from ..database.finance_repo import Operation, Person
+from ..database.finance_repo import Debt, Operation, Person
 from ..services import search
 from ..services.currency import CurrencyService, Rates
 from ..services.finance import DebtService, FinanceService
@@ -81,6 +81,16 @@ class FinanceMixin:
         from dataclasses import replace
         if r.intent == "CREATE_TASK" and PURCHASE_RE.search(text) and parse_amount(text):
             return replace(r, intent="CREATE_EXPENSE", amount_text=None, category=None, description=r.title)
+        correction = re.search(r"\bне\s+\d", _norm(text))
+        # «Сергей должен мне не 5000, а 6000» — это исправление, а не новый долг.
+        if r.intent == "CREATE_DEBT" and correction:
+            return replace(r, intent="UPDATE_DEBT")
+        # «Не 5000, а 6000» сразу после долга — исправляем долг, а не расход.
+        ctx = self._ctx()
+        if (r.intent in ("UPDATE_FINANCE", "DELETE_FINANCE") and ctx.entity_type == "debt" and ctx.entity_id
+                and r.target in (None, "LAST") and not r.op_type and not r.new_category
+                and not F.match_category(text) and not re.search(r"расход|доход|трат", _norm(text))):
+            return replace(r, intent="UPDATE_DEBT" if r.intent == "UPDATE_FINANCE" else "DELETE_DEBT")
         return r
 
     # ------------------------------------------------------------ помощники
@@ -142,9 +152,9 @@ class FinanceMixin:
         self._set_last("finance", op.id)
         amount = F.money(op.amount) + (f" ({F.money(orig, cur)})" if cur else "")
         what = f" — {category.lower()}" if category else ""
-        kind = "расход" if op_type == "expense" else "доход"
+        kind = "Расход" if op_type == "expense" else "Доход"
         when = "" if op.date == self.today() else f" ({_day_short(op.date)})"
-        return Reply(f"🎩 Разумеется, Сэр!\nЗаписал {kind}: {amount}{what}{when}!")
+        return Reply(f"🎩 Записал, Сэр!\n{kind}: {amount}{what}{when}!")
 
     def _resolve_ops(self, r: BrainResult) -> list[Operation]:
         count = r.count
@@ -301,11 +311,14 @@ class FinanceMixin:
 
     def edit_list_view(self, edit: bool = True) -> Reply:
         ops = self.finance.latest(None, 8)
-        if not ops:
+        debts = self.debts.active()
+        if not ops and not debts:
             return Reply("🎩 Сэр, записей пока нет!", buttons=FIN_BUTTONS, edit=edit)
         rows = [[("❌ " + F.op_line(o), f"fin:del:{o.id}")] for o in ops]
+        rows += [[("❌ " + self.debt_line(p, d), f"fin:deldebt:{d.id}")] for p, d in debts[:8]]
         rows.append([("↩️ Назад", "fin:stats")])
-        return Reply("🎩 Какую запись удалить, Сэр?", buttons=rows, edit=edit)
+        return Reply("🎩 Какую запись удалить, Сэр?\n\nЧтобы изменить — просто напишите, например: "
+                     "«Не 700, а 800» или «Сергей должен не 5000, а 6000».", buttons=rows, edit=edit)
 
     # ------------------------------------------------------------ долги
     def _resolve_person(self, r: BrainResult, action: str, create: bool) -> Person | Reply:
@@ -339,9 +352,67 @@ class FinanceMixin:
         if not direction:
             return self._ask(r, "direction", f"🎩 Сэр, кто кому должен: {person.full_name} вам или вы?")
         total = self.debts.add(person, direction, money[0])
+        debt = self.debts.get(person, direction)
+        self._set_last("debt", debt.id if debt else None)
         if direction == "owes_me":
             return Reply(f"🎩 Записал, Сэр!\n\n🤝 Вам должен: {person.full_name} — {F.money(total)}")
         return Reply(f"🎩 Записал, Сэр!\n\n💸 Ваш долг: {person.full_name} — {F.money(total)}")
+
+    @staticmethod
+    def debt_line(person: Person, debt: Debt) -> str:
+        if debt.direction == "owes_me":
+            return f"🤝 Вам должен: {person.full_name} — {F.money(debt.amount)}"
+        return f"💸 Ваш долг: {person.full_name} — {F.money(debt.amount)}"
+
+    def _last_debt(self) -> Optional[Debt]:
+        ctx = self._ctx()
+        if ctx.entity_type == "debt" and ctx.entity_id:
+            return self.debts.by_id(ctx.entity_id)
+        return None
+
+    def _ambiguous_debts(self, r: BrainResult, items: list[tuple[Person, Debt]]) -> Reply:
+        self._set_pending(r.intent, None, {"result": self._dump(r), "question": "выбор из списка", "choose": "debt"})
+        rows = [[(self.debt_line(p, d), f"pick:{d.id}")] for p, d in items[:8]]
+        rows.append([("↩️ Отмена", "pick:cancel")])
+        return Reply("🎩 Сэр, уточните, пожалуйста, какой именно долг?", buttons=rows)
+
+    def _find_debt(self, r: BrainResult) -> Debt | Reply | None:
+        """Какой долг имеет в виду пользователь: по имени, по последнему разговору или единственный."""
+        direction = r.direction or direction_from_text(self._message)
+        if r.person:
+            person = self._resolve_person(r, r.intent, create=False)
+            if isinstance(person, Reply):
+                return person
+            items = [(person, d) for d in (self.debts.get(person, x) for x in ("owes_me", "i_owe")) if d]
+            if not items:
+                return Reply(f"🎩 Сэр, долгов с человеком по имени {person.full_name} нет!")
+            if len(items) > 1 and direction:
+                items = [(p, d) for p, d in items if d.direction == direction] or items
+            return items[0][1] if len(items) == 1 else self._ambiguous_debts(r, items)
+        last = self._last_debt()
+        if last:
+            return last
+        items = self.debts.active(direction)
+        if not items:
+            return None
+        return items[0][1] if len(items) == 1 else self._ambiguous_debts(r, items)
+
+    def _update_debt(self, r: BrainResult, chosen: Optional[Debt] = None) -> Reply:
+        debt = chosen or self._find_debt(r)
+        if isinstance(debt, Reply):
+            return debt
+        if not debt:
+            return Reply("🎩 Сэр, я не нашёл такой долг! Уточните, пожалуйста, чей именно?")
+        person = self.debts.person(debt.person_id)
+        money = self._money_in(r.new_amount_text or r.amount_text, r.currency)
+        if isinstance(money, Reply):
+            return money
+        if money is None:
+            self._set_last("debt", debt.id)
+            return self._ask(r, "new_amount_text", "🎩 Сэр, какая теперь сумма?\n\n" + self.debt_line(person, debt))
+        updated = self.debts.set_total(person, debt.direction, money[0])
+        self._set_last("debt", updated.id)
+        return Reply("🎩 Готово, Сэр! Исправил долг!\n\n" + self.debt_line(person, updated))
 
     def _repay_debt(self, r: BrainResult, chosen: Optional[Person] = None) -> Reply:
         person = chosen or self._resolve_person(r, r.intent, create=False)
@@ -359,11 +430,23 @@ class FinanceMixin:
         if isinstance(money, Reply):
             return money
         paid, left = self.debts.repay(person, direction, money[0] if money else None)
+        debt = self.debts.get(person, direction)
+        self._set_last("debt", debt.id if debt else None)
         if left > 0:
             return Reply(f"🎩 Отлично, Сэр!\n\n{person.full_name}: погашено {F.money(paid)}, осталось {F.money(left)}")
         return Reply(f"🎩 Великолепно, Сэр! {person.full_name} — долг полностью погашен!")
 
-    def _delete_debt(self, r: BrainResult, chosen: Optional[Person] = None) -> Reply:
+    def _delete_debt(self, r: BrainResult, chosen: Optional[Person | Debt] = None) -> Reply:
+        if isinstance(chosen, Debt) or (not chosen and not r.person):
+            debt = chosen if isinstance(chosen, Debt) else self._find_debt(r)
+            if isinstance(debt, Reply):
+                return debt
+            if not debt:
+                return Reply("🎩 Сэр, я не нашёл такой долг! Уточните, пожалуйста, чей именно?")
+            person = self.debts.person(debt.person_id)
+            self.debts.remove(person, debt.direction)
+            self._set_last("debt", None)
+            return Reply(f"🎩 Удалил долг, Сэр!\n\n❌ {self.debt_line(person, debt)}")
         person = chosen or self._resolve_person(r, r.intent, create=False)
         if isinstance(person, Reply):
             return person
@@ -399,7 +482,7 @@ class FinanceMixin:
             parts.append("🤝 Вам должны:\n" + "\n".join(f"{p.full_name} — {F.money(d.amount)}" for p, d in owes))
         if mine:
             parts.append("💸 Вы должны:\n" + "\n".join(f"{p.full_name} — {F.money(d.amount)}" for p, d in mine))
-        return Reply("🎩 Ваши долги, Сэр!\n\n" + "\n\n".join(parts), buttons=FIN_BUTTONS, edit=edit)
+        return Reply("🎩 Разумеется, Сэр!\n\n" + "\n\n".join(parts), buttons=FIN_BUTTONS, edit=edit)
 
     def _show_debts(self, r: BrainResult) -> Reply:
         t = _norm(self._message or "")
@@ -468,6 +551,12 @@ class FinanceMixin:
             return Reply("🎩 Что найти, Сэр?\n\nНапример: «Сколько я потратил на продукты за месяц?»",
                          buttons=FIN_BUTTONS, edit=True)
         if action == "edit":
+            return self.edit_list_view()
+        if action == "deldebt" and len(parts) == 3 and parts[2].isdigit():
+            debt = self.debts.by_id(int(parts[2]))
+            person = self.debts.person(debt.person_id) if debt else None
+            if person:
+                self.debts.remove(person, debt.direction)
             return self.edit_list_view()
         if action == "del" and len(parts) == 3 and parts[2].isdigit():
             op = self.finance.get(int(parts[2]))

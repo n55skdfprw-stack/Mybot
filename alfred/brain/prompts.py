@@ -9,7 +9,7 @@ INTENTS = [
     "CREATE_NOTE", "UPDATE_NOTE", "DELETE_NOTE", "SEARCH_NOTE", "SHOW_NOTES",
     "CREATE_EVENT", "UPDATE_EVENT", "DELETE_EVENT", "SHOW_SCHEDULE",
     "CREATE_EXPENSE", "CREATE_INCOME", "UPDATE_FINANCE", "DELETE_FINANCE", "SEARCH_FINANCE",
-    "SHOW_STATISTICS", "SHOW_BALANCE", "CREATE_DEBT", "REPAY_DEBT", "DELETE_DEBT", "SHOW_DEBTS",
+    "SHOW_STATISTICS", "SHOW_BALANCE", "CREATE_DEBT", "UPDATE_DEBT", "REPAY_DEBT", "DELETE_DEBT", "SHOW_DEBTS",
     "SHOW_CURRENCY_RATES", "CONVERT_CURRENCY",
     "ANSWER", "CANCEL", "GREETING", "THANKS", "OTHER_SECTION", "UNKNOWN",
 ]
@@ -18,7 +18,7 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 Твоя единственная задача: разобрать сообщение пользователя и вернуть ОДИН JSON-объект. Никакого текста вокруг JSON.
 
 Поля JSON (лишние поля не добавляй, неизвестные ставь null):
-- "intent": одно из: CREATE_TASK, UPDATE_TASK, COMPLETE_TASK, RESTORE_TASK, DELETE_TASK, SHOW_TASKS, CREATE_NOTE, UPDATE_NOTE, DELETE_NOTE, SEARCH_NOTE, SHOW_NOTES, CREATE_EVENT, UPDATE_EVENT, DELETE_EVENT, SHOW_SCHEDULE, CREATE_EXPENSE, CREATE_INCOME, UPDATE_FINANCE, DELETE_FINANCE, SEARCH_FINANCE, SHOW_STATISTICS, SHOW_BALANCE, CREATE_DEBT, REPAY_DEBT, DELETE_DEBT, SHOW_DEBTS, SHOW_CURRENCY_RATES, CONVERT_CURRENCY, ANSWER, CANCEL, GREETING, THANKS, OTHER_SECTION, UNKNOWN
+- "intent": одно из: CREATE_TASK, UPDATE_TASK, COMPLETE_TASK, RESTORE_TASK, DELETE_TASK, SHOW_TASKS, CREATE_NOTE, UPDATE_NOTE, DELETE_NOTE, SEARCH_NOTE, SHOW_NOTES, CREATE_EVENT, UPDATE_EVENT, DELETE_EVENT, SHOW_SCHEDULE, CREATE_EXPENSE, CREATE_INCOME, UPDATE_FINANCE, DELETE_FINANCE, SEARCH_FINANCE, SHOW_STATISTICS, SHOW_BALANCE, CREATE_DEBT, UPDATE_DEBT, REPAY_DEBT, DELETE_DEBT, SHOW_DEBTS, SHOW_CURRENCY_RATES, CONVERT_CURRENCY, ANSWER, CANCEL, GREETING, THANKS, OTHER_SECTION, UNKNOWN
 - "title": название нового дела, коротко, с большой буквы, БЕЗ слов о дате, глагол в неопределённой форме: «Подготовить отчёт», «Купить хлеб», «Позвонить маме» (а не «Подготовь отчёт») (строка или null)
 - "due_when": слова пользователя о дате дела, дословно, как он их написал: «завтра», «в пятницу», «15 октября», «через 3 дня» (строка или null). Сам дату НЕ вычисляй.
 - "target": как пользователь назвал существующее дело/заметку, которое нужно найти (строка или null). Если пользователь говорит «её», «его», «это», «последнее» и имеет в виду последний объект из контекста — пиши "LAST".
@@ -87,6 +87,7 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 - «Сколько я потратил на продукты за месяц?», «Что я покупал вчера?» — SEARCH_FINANCE. «Статистика», «Покажи финансы» — SHOW_STATISTICS.
 - «Какой у меня остаток?», «Сколько у меня денег?» — SHOW_BALANCE.
 - «Сергей должен мне 5000», «Я должен Максиму 3000», «Занял Игорю 1000» — CREATE_DEBT. «Сергей вернул 2000», «Я отдал Максиму долг» — REPAY_DEBT. «Мне должны», «Кому я должен», «Долги» — SHOW_DEBTS. Долг — это НЕ расход и НЕ доход.
+- Исправление долга: «Сергей должен не 5000, а 6000», «Долг Максиму не 3000, а 2500», а также «Не 5000, а 6000», если последний объект разговора — долг, — UPDATE_DEBT (person — если назван, new_amount_text — новая сумма). «Удали долг Сергея» — DELETE_DEBT.
 - «Курс доллара», «Курсы валют» — SHOW_CURRENCY_RATES. «Сколько 100 долларов в рублях?», «5000 рублей в евро», «100 usd» — CONVERT_CURRENCY.
 - Дни рождения, досье, погода, время в городах — OTHER_SECTION.
 - «Отмена», «не надо», «забудь» — CANCEL. Приветствие — GREETING. Благодарность — THANKS.
@@ -121,6 +122,9 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 
 Пример 12. Сообщение: «Я должен Максиму 3000» →
 {"intent":"CREATE_DEBT","person":"Максим","direction":"i_owe","amount_text":"3000","scope":"one"}
+
+Пример 13. Последний объект — долг: Сергей должен пользователю 5000 ₽. Сообщение: «Не 5000, а 6000» →
+{"intent":"UPDATE_DEBT","target":"LAST","new_amount_text":"6000","scope":"one"}
 
 Пример 2. Сообщение: «Запиши, что паспорт лежит в верхнем ящике» →
 {"intent":"CREATE_NOTE","content":"Паспорт лежит в верхнем ящике","scope":"one"}

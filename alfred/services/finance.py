@@ -116,6 +116,17 @@ class DebtService:
             raise VerificationError("debt not updated")
         return paid, left
 
+    def by_id(self, debt_id: int) -> Optional[Debt]:
+        return self.debts.get(self.user_id, debt_id)
+
+    def set_total(self, person: Person, direction: str, amount: float) -> Optional[Debt]:
+        """Исправление: сумма долга становится ровно такой (а не прибавляется)."""
+        self.debts.set_amount(self.user_id, person.id, direction, round(amount, 2))
+        check = self.get(person, direction)
+        if not check or abs(check.amount - amount) > 0.001:
+            raise VerificationError("debt not corrected")
+        return check
+
     def remove(self, person: Person, direction: str) -> None:
         self.debts.set_amount(self.user_id, person.id, direction, 0)
 

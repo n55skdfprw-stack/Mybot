@@ -65,7 +65,7 @@ def say(a, llm, text, **ai):
 def test_expense_as_in_spec(tmp_path):
     a, llm = make(tmp_path)
     r = say(a, llm, "Потратил 2500 на продукты", intent="CREATE_EXPENSE", amount_text="2500", category="продукты")
-    assert r.text == "🎩 Разумеется, Сэр!\nЗаписал расход: 2 500 ₽ — продукты!"
+    assert r.text == "🎩 Записал, Сэр!\nРасход: 2 500 ₽ — продукты!"
 
 
 def test_expense_without_category_asks(tmp_path):
@@ -73,13 +73,13 @@ def test_expense_without_category_asks(tmp_path):
     r = say(a, llm, "Потратил 700", intent="CREATE_EXPENSE", amount_text="700")
     assert r.text == "🎩 Разумеется, Сэр! На что был расход?"
     r = say(a, llm, "На такси", intent="ANSWER", answer="такси")
-    assert "700 ₽ — транспорт" in r.text
+    assert "700 ₽ — такси" in r.text
 
 
 def test_income_without_source_not_asked(tmp_path):
     a, llm = make(tmp_path)
     r = say(a, llm, "Получил 120000", intent="CREATE_INCOME", amount_text="120000")
-    assert r.text == "🎩 Разумеется, Сэр!\nЗаписал доход: 120 000 ₽!"
+    assert r.text == "🎩 Записал, Сэр!\nДоход: 120 000 ₽!"
     r = say(a, llm, "Получил зарплату 120к", intent="CREATE_INCOME", amount_text="120к", category="зарплата")
     assert "120 000 ₽ — зарплата" in r.text
 
@@ -94,7 +94,7 @@ def test_amount_forms_and_yesterday(tmp_path):
 def test_purchase_phrase_is_expense_not_task(tmp_path):
     a, llm = make(tmp_path)
     r = say(a, llm, "Купил кроссовки за 8000", intent="CREATE_TASK", title="Купить кроссовки")
-    assert "Записал расход: 8 000 ₽ — одежда" in r.text and a.tasks.active() == []
+    assert "Расход: 8 000 ₽ — одежда" in r.text and a.tasks.active() == []
 
 
 def test_foreign_expense_converted(tmp_path):
@@ -129,7 +129,7 @@ def test_statistics(tmp_path):
     style_ok(r.text)
     assert "💰 Остаток: 224 400 ₽" in r.text
     assert "📈 Доходы за месяц: 250 000 ₽" in r.text and "📉 Расходы за месяц: 25 600 ₽" in r.text
-    assert r.text.index("🛒 Продукты — 18 400 ₽") < r.text.index("🚗 Транспорт — 7 200 ₽")
+    assert r.text.index("🛒 Продукты — 18 400 ₽") < r.text.index("🚕 Такси — 7 200 ₽")
     assert r.buttons
 
 
@@ -175,7 +175,7 @@ def test_correction_category(tmp_path):
     a, llm = make(tmp_path)
     say(a, llm, "Потратил 500 на продукты", intent="CREATE_EXPENSE", amount_text="500", category="продукты")
     say(a, llm, "Это было на такси", intent="UPDATE_FINANCE", target="LAST", new_category="такси")
-    assert a.finance.latest()[0].category == "Транспорт"
+    assert a.finance.latest()[0].category == "Такси"
 
 
 def test_delete_last_expense_keeps_income(tmp_path):
@@ -310,7 +310,7 @@ def test_ai_invented_category_is_ignored(tmp_path):
     r = say(a, llm, "Потратил 700", intent="CREATE_EXPENSE", amount_text="700", category="продукты")
     assert r.text == "🎩 Разумеется, Сэр! На что был расход?"
     r = say(a, llm, "На такси", intent="ANSWER", answer="такси")
-    assert "700 ₽ — транспорт" in r.text
+    assert "700 ₽ — такси" in r.text
 
 
 def test_correction_picks_record_by_old_amount(tmp_path):
@@ -336,3 +336,78 @@ def test_k_suffix_from_message(tmp_path, text, ai_amount, expected):
     intent = "CREATE_INCOME" if text.startswith("Получил") else "CREATE_EXPENSE"
     r = say(a, llm, text, intent=intent, amount_text=ai_amount, category="продукты" if "продукт" in text else None)
     assert expected in r.text
+
+
+# ---------------------------------------------------------------- версия 3.2
+
+def test_taxi_and_transport_card_are_separate(tmp_path):
+    a, llm = make(tmp_path)
+    r = say(a, llm, "Потратил 800 на такси", intent="CREATE_EXPENSE", amount_text="800", category="такси")
+    assert r.text == "🎩 Записал, Сэр!\nРасход: 800 ₽ — такси!"
+    r = say(a, llm, "Пополнил БСК на 1000", intent="CREATE_EXPENSE", amount_text="1000", category="БСК")
+    assert r.text == "🎩 Записал, Сэр!\nРасход: 1 000 ₽ — транспорт!"
+    r = say(a, llm, "Потратил 70 на метро", intent="CREATE_EXPENSE", amount_text="70", category="метро")
+    assert "— транспорт" in r.text
+
+
+def test_debts_header(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "Сергей должен мне 6000", intent="CREATE_DEBT", person="Сергей", direction="owes_me",
+        amount_text="6000")
+    r = a.handle_callback("fin:debts")
+    assert r.text.startswith("🎩 Разумеется, Сэр!\n\n🤝 Вам должны:\nСергей — 6 000 ₽")
+
+
+def test_debt_correction_right_after(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "Сергей должен мне 5000", intent="CREATE_DEBT", person="Сергей", direction="owes_me",
+        amount_text="5000")
+    # ИИ ошибся и решил, что это исправление расхода — Альфред всё равно правит долг
+    r = say(a, llm, "Не 5000 а 6000", intent="UPDATE_FINANCE", target="LAST", new_amount_text="6000")
+    style_ok(r.text)
+    assert r.text == "🎩 Готово, Сэр! Исправил долг!\n\n🤝 Вам должен: Сергей — 6 000 ₽"
+    [(p, d)] = a.debts.active()
+    assert d.amount == 6000 and a.finance.latest() == []
+
+
+def test_debt_correction_by_name_not_added(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "Я должен Максиму 3000", intent="CREATE_DEBT", person="Максим", direction="i_owe",
+        amount_text="3000")
+    say(a, llm, "Потратил 500 на продукты", intent="CREATE_EXPENSE", amount_text="500", category="продукты")
+    r = say(a, llm, "Я должен Максиму не 3000, а 2500", intent="CREATE_DEBT", person="Максим",
+            direction="i_owe", amount_text="2500")
+    assert r.text == "🎩 Готово, Сэр! Исправил долг!\n\n💸 Ваш долг: Максим — 2 500 ₽"
+    assert a.finance.latest()[0].amount == 500
+
+
+def test_debt_correction_asks_which(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "x", intent="CREATE_DEBT", person="Сергей", direction="owes_me", amount_text="5000")
+    say(a, llm, "x", intent="CREATE_DEBT", person="Максим", direction="i_owe", amount_text="3000")
+    a._set_last("debt", None)
+    r = say(a, llm, "Исправь долг на 4000", intent="UPDATE_DEBT", new_amount_text="4000")
+    assert "какой именно долг" in r.text and len(r.buttons) == 3
+    debt_id = int(r.buttons[1][0][1].split(":")[1])
+    r = a.handle_callback(f"pick:{debt_id}")
+    assert "Исправил долг" in r.text
+    assert sorted(d.amount for _, d in a.debts.active()) == [4000, 5000]
+
+
+def test_edit_screen_deletes_debt(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "x", intent="CREATE_DEBT", person="Сергей", direction="owes_me", amount_text="6000")
+    say(a, llm, "x", intent="CREATE_EXPENSE", amount_text="800", category="такси")
+    r = a.handle_callback("fin:edit")
+    datas = [row[0][1] for row in r.buttons]
+    assert any(d.startswith("fin:deldebt:") for d in datas) and any(d.startswith("fin:del:") for d in datas)
+    deldebt = next(d for d in datas if d.startswith("fin:deldebt:"))
+    r = a.handle_callback(deldebt)
+    assert a.debts.active() == [] and len(a.finance.latest()) == 1
+
+
+def test_delete_last_debt_by_words(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "x", intent="CREATE_DEBT", person="Сергей", direction="owes_me", amount_text="6000")
+    r = say(a, llm, "Удали его", intent="DELETE_FINANCE", target="LAST")
+    assert r.text.startswith("🎩 Удалил долг, Сэр!") and a.debts.active() == []

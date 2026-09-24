@@ -154,6 +154,11 @@ class DebtRepository:
                              (user_id, person_id, direction)).fetchone()
         return Debt(r["id"], r["person_id"], r["direction"], r["amount"]) if r else None
 
+    def get(self, user_id: int, debt_id: int) -> Optional[Debt]:
+        with self.db.connect() as conn:
+            r = conn.execute("SELECT * FROM debts WHERE id=? AND user_id=?", (debt_id, user_id)).fetchone()
+        return Debt(r["id"], r["person_id"], r["direction"], r["amount"]) if r else None
+
     def set_amount(self, user_id: int, person_id: int, direction: str, amount: float) -> None:
         """Сохраняет сумму долга. Ноль — долг погашен, запись удаляется."""
         with self.db.connect() as conn:
