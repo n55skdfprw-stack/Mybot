@@ -35,6 +35,9 @@ FLAGS = {"USD": "🇺🇸 Доллар", "EUR": "🇪🇺 Евро", "CNY": "�
          "KZT": "🇰🇿 Тенге", "BYN": "🇧🇾 Белорусский рубль", "AED": "🇦🇪 Дирхам", "JPY": "🇯🇵 Иена",
          "CHF": "🇨🇭 Франк"}
 PURCHASE_RE = re.compile(r"\b(потратил\w*|купил\w*|заплатил\w*|оплатил\w*|отдал\w*\s+за)\b", re.IGNORECASE)
+TOPUP_RE = re.compile(r"\bпополн\w*", re.IGNORECASE)
+# На эти вопросы Альфреда короткий ответ — это всегда ответ, а не новая команда.
+SHORT_ANSWER_PARAMS = {"category", "person", "amount_text", "new_amount_text"}
 
 
 def _day_short(d: date) -> str:
@@ -81,6 +84,11 @@ class FinanceMixin:
         from dataclasses import replace
         if r.intent == "CREATE_TASK" and PURCHASE_RE.search(text) and parse_amount(text):
             return replace(r, intent="CREATE_EXPENSE", amount_text=None, category=None, description=r.title)
+        # «Пополнил БСК на 1000», «Оплатил связь» — это трата, а не доход.
+        if r.intent == "CREATE_INCOME" and (
+                PURCHASE_RE.search(text) or
+                (TOPUP_RE.search(text) and F.match_category(text) in ("Транспорт", "Связь"))):
+            return replace(r, intent="CREATE_EXPENSE")
         correction = re.search(r"\bне\s+\d", _norm(text))
         # «Сергей должен мне не 5000, а 6000» — это исправление, а не новый долг.
         if r.intent == "CREATE_DEBT" and correction:
@@ -92,6 +100,22 @@ class FinanceMixin:
                 and not F.match_category(text) and not re.search(r"расход|доход|трат", _norm(text))):
             return replace(r, intent="UPDATE_DEBT" if r.intent == "UPDATE_FINANCE" else "DELETE_DEBT")
         return r
+
+    def _guard_short_answer(self, r: BrainResult, text: str, ctx) -> BrainResult:
+        """Альфред спросил «На что был расход?», пользователь ответил «Такси» — это ответ, а не поиск."""
+        from dataclasses import replace
+        if r.intent == "ANSWER" or not ctx.intent or ctx.missing_parameter not in SHORT_ANSWER_PARAMS:
+            return r
+        words = text.strip(" .!?").split()
+        if not words or len(words) > 4 or "?" in text:
+            return r
+        has_digits = bool(re.search(r"\d", text))
+        if ctx.missing_parameter in ("category", "person") and has_digits:
+            return r
+        if ctx.missing_parameter in ("amount_text", "new_amount_text") and not parse_amount(text):
+            return r
+        log.info("Guard: %s -> ANSWER (%s)", r.intent, ctx.missing_parameter)
+        return replace(r, intent="ANSWER", answer=text.strip(" .!"))
 
     # ------------------------------------------------------------ помощники
     def _op_day(self, r: BrainResult) -> date:

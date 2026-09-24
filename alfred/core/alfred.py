@@ -186,6 +186,7 @@ class Alfred(ScheduleMixin, FinanceMixin):
 
         result = self._guard_restore(result, text)
         result = self._guard_event_vs_note(result, text)
+        result = self._guard_short_answer(result, text, ctx)
         result = self._guard_finance(result, text)
         await self._prefetch_rates(result)
         try:

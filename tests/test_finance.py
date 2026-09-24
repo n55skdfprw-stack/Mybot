@@ -411,3 +411,37 @@ def test_delete_last_debt_by_words(tmp_path):
     say(a, llm, "x", intent="CREATE_DEBT", person="Сергей", direction="owes_me", amount_text="6000")
     r = say(a, llm, "Удали его", intent="DELETE_FINANCE", target="LAST")
     assert r.text.startswith("🎩 Удалил долг, Сэр!") and a.debts.active() == []
+
+
+# ---------------------------------------------------------------- версия 3.3
+
+def test_topup_transport_card_is_expense(tmp_path):
+    a, llm = make(tmp_path)
+    r = say(a, llm, "Пополнил бск на 1000", intent="CREATE_INCOME", amount_text="1000", category="транспорт")
+    assert r.text == "🎩 Записал, Сэр!\nРасход: 1 000 ₽ — транспорт!"
+    assert a.finance.latest()[0].type == "expense"
+
+
+def test_real_income_not_touched(tmp_path):
+    a, llm = make(tmp_path)
+    r = say(a, llm, "Получил зарплату 100000", intent="CREATE_INCOME", amount_text="100000", category="зарплата")
+    assert r.text.startswith("🎩 Записал, Сэр!\nДоход:")
+
+
+def test_short_answer_is_not_search(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "Потратил на такси 500", intent="CREATE_EXPENSE", amount_text="500", category="такси")
+    r = say(a, llm, "Потратил 1500", intent="CREATE_EXPENSE", amount_text="1500")
+    assert r.text == "🎩 Разумеется, Сэр! На что был расход?"
+    # ИИ ошибся и принял ответ за поиск — Альфред всё равно понимает, что это ответ
+    r = say(a, llm, "Такси", intent="SEARCH_FINANCE", category="такси")
+    assert r.text == "🎩 Записал, Сэр!\nРасход: 1 500 ₽ — такси!"
+    assert sorted(o.amount for o in a.finance.latest()) == [500, 1500]
+
+
+def test_question_after_pending_still_works(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "Потратил 1500", intent="CREATE_EXPENSE", amount_text="1500")
+    r = say(a, llm, "Сколько я потратил на такси за месяц?", intent="SEARCH_FINANCE", category="такси",
+            period_text="за месяц")
+    assert "за месяц" in r.text
