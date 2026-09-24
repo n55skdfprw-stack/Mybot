@@ -15,6 +15,20 @@ from .reply import Reply
 
 MED_INTENTS = {"MED_CASE", "MED_DRUG", "MED_RECOVER", "MED_SHOW", "MED_DELETE", "MED_ALLERGY", "MED_CONTACT"}
 RECOVER_RE = re.compile(r"\b(выздоровел\w*|поправил\w*|вылечил\w*)\b")
+ALLERGY_RE = re.compile(r"(?:аллерги\w*|непереносимост\w*)\s+(?:на\s+|к\s+)?(.+)", re.IGNORECASE)
+ALLERGY_OFF_RE = re.compile(r"больше нет|уже нет|прошла|убери|удали|нет аллерги", re.IGNORECASE)
+
+
+def allergy_from(text: str) -> Optional[str]:
+    """«У меня аллергия на пенициллин» → «пенициллин» (если ИИ не вытащил сам)."""
+    m = ALLERGY_RE.search(text or "")
+    if not m:
+        return None
+    what = re.split(r"\s+(?:больше|уже)\s+нет|\s+прошла", m.group(1), maxsplit=1)[0]
+    what = what.strip(" .!,")
+    if what and m.group(0).lower().startswith("непереносим"):
+        return f"непереносимость {what}"          # «лактозы» само по себе читается странно
+    return what or None
 
 
 class MedMixin:
@@ -75,6 +89,16 @@ class MedMixin:
         t = search.normalize(text)
         if r.intent not in MED_INTENTS and RECOVER_RE.search(t) and len(t.split()) <= 6:
             return replace(r, intent="MED_RECOVER")
+        # «У меня аллергия на пенициллин» — ИИ мог выбрать не то или не заполнить, на что аллергия.
+        what = allergy_from(text)
+        if what and r.intent not in ("MED_CASE", "MED_DRUG"):
+            med = dict(r.med or {})
+            med.setdefault("allergy", what)
+            if not med.get("allergy"):
+                med["allergy"] = what
+            if ALLERGY_OFF_RE.search(t):
+                med["remove"] = True
+            return replace(r, intent="MED_ALLERGY", med=med)
         return r
 
     # ------------------------------------------------------------ действия

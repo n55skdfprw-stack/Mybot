@@ -154,3 +154,16 @@ def test_same_illness_adds_to_open_case(tmp_path):
             med={"illness": "ангина", "drugs": [{"name": "Стрепсилс"}]})
     assert r.text.startswith("🎩 Дополнил медкарту, Сэр!") and len(a.med.cases()) == 1
     assert [d.name for d in a.med.cases()[0].drugs] == ["Амоксициллин", "Стрепсилс"]
+
+
+def test_allergy_when_ai_left_it_empty(tmp_path):
+    """Живая ошибка: «У меня аллергия на пенициллин» → «аллергии пока не записаны»."""
+    a, llm = make(tmp_path)
+    r = say(a, llm, "У меня аллергия на пенициллин", intent="MED_ALLERGY", med={})
+    assert r.text == "🎩 Записал, Сэр! Буду иметь в виду.\n\n⚠️ Аллергии: Пенициллин"
+    r = say(a, llm, "Ещё непереносимость лактозы", intent="CREATE_NOTE", content="непереносимость лактозы")
+    assert r.text.endswith("⚠️ Аллергии: Пенициллин, Непереносимость лактозы") and a.notes.all() == []
+    r = say(a, llm, "Аллергии на пенициллин больше нет", intent="MED_ALLERGY", med={})
+    assert r.text == "🎩 Готово, Сэр! Убрал из аллергий: Пенициллин"
+    r = say(a, llm, "Какие у меня аллергии?", intent="MED_ALLERGY", med={})
+    assert "⚠️ Непереносимость лактозы" in r.text
