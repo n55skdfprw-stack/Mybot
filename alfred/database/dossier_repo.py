@@ -43,15 +43,33 @@ def _card(r) -> Card:
                 hidden=bool(r["dossier_hidden"]))
 
 
+# Человек «пустой», если о нём ничего не записано, досье не заводили явно и у него нет ни долга,
+# ни дня рождения. Такие остаются после удаления долга или дня рождения — их убираем.
+_EMPTY = " AND ".join(f"COALESCE(TRIM({f}), '') = ''" for f in TEXT_FIELDS)
+_ORPHAN = (f"user_id=? AND dossier_explicit=0 AND {_EMPTY} "
+           "AND id NOT IN (SELECT person_id FROM debts WHERE user_id=people.user_id) "
+           "AND id NOT IN (SELECT person_id FROM birthdays WHERE user_id=people.user_id)")
+
+
 class DossierRepository:
     def __init__(self, db: Database):
         self.db = db
 
+    def purge_orphans(self, user_id: int) -> int:
+        with self.db.connect() as conn:
+            return conn.execute(f"DELETE FROM people WHERE {_ORPHAN}", (user_id,)).rowcount
+
     def all(self, user_id: int) -> list[Card]:
+        self.purge_orphans(user_id)
         with self.db.connect() as conn:
             rows = conn.execute("SELECT * FROM people WHERE user_id=? AND dossier_hidden=0 "
                                 "ORDER BY first_name, last_name", (user_id,)).fetchall()
         return [_card(r) for r in rows]
+
+    def mark_explicit(self, user_id: int, person_id: int) -> None:
+        with self.db.connect() as conn:
+            conn.execute("UPDATE people SET dossier_explicit=1, dossier_hidden=0, updated_at=? "
+                         "WHERE id=? AND user_id=?", (_now(), person_id, user_id))
 
     def get(self, user_id: int, person_id: int) -> Optional[Card]:
         with self.db.connect() as conn:
@@ -78,7 +96,8 @@ class DossierRepository:
                 (person_id, user_id, person_id, user_id)).fetchone()["n"]
             if linked:
                 sets = ", ".join(f"{f}=NULL" for f in TEXT_FIELDS)
-                conn.execute(f"UPDATE people SET {sets}, dossier_hidden=1, updated_at=? WHERE id=? AND user_id=?",
+                conn.execute(f"UPDATE people SET {sets}, dossier_hidden=1, dossier_explicit=0, updated_at=? "
+                             "WHERE id=? AND user_id=?",
                              (_now(), person_id, user_id))
             else:
                 conn.execute("DELETE FROM people WHERE id=? AND user_id=?", (person_id, user_id))

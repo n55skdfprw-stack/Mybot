@@ -79,7 +79,7 @@ class DossierMixin:
             head = "🎩 Сэр, досье на этого человека уже есть!"
         else:
             person = self.debts.create_person(r.person)
-            card = self.dossier.get(person.id)
+            card = self.dossier.show(person.id)
             head = "🎩 Разумеется, Сэр! Досье создано!"
         tail = ""
         if changes:

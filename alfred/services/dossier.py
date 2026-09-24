@@ -59,8 +59,8 @@ class DossierService:
         return self.repo.get(self.user_id, person_id)
 
     def show(self, person_id: int) -> Optional[Card]:
-        """Сделать человека видимым в досье (например, «Создай досье на Сергея», если он уже есть в долгах)."""
-        self.repo.set(self.user_id, person_id, {})
+        """Явно завести досье (или вернуть удалённое) — человек останется в списке, даже если о нём пока ничего нет."""
+        self.repo.mark_explicit(self.user_id, person_id)
         return self.get(person_id)
 
     def search(self, query: str) -> list[Card]:

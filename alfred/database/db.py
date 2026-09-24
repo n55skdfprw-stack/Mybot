@@ -135,6 +135,7 @@ CREATE TABLE IF NOT EXISTS people (
     likes_dislikes TEXT,
     important_facts TEXT,
     dossier_hidden INTEGER NOT NULL DEFAULT 0,  -- 1: досье удалено, но человек остался ради долга/дня рождения
+    dossier_explicit INTEGER NOT NULL DEFAULT 0,  -- 1: досье заведено явно («Создай досье на …»)
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -200,6 +201,8 @@ class Database:
             cols = {r["name"] for r in conn.execute("PRAGMA table_info(people)")}
             if "dossier_hidden" not in cols:
                 conn.execute("ALTER TABLE people ADD COLUMN dossier_hidden INTEGER NOT NULL DEFAULT 0")
+            if "dossier_explicit" not in cols:
+                conn.execute("ALTER TABLE people ADD COLUMN dossier_explicit INTEGER NOT NULL DEFAULT 0")
             row = conn.execute("SELECT version FROM schema_version").fetchone()
             if row is None:
                 conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))

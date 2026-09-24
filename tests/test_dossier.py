@@ -121,3 +121,23 @@ def test_phone_as_note_becomes_dossier(tmp_path):
             person="Сергей")
     assert "Записал: телефон" in r.text and a.notes.all() == []
     assert a.dossier.all()[0].phone == "+7 900 123-45-67"
+
+
+def test_deleted_debts_and_birthdays_leave_no_ghosts(tmp_path):
+    """Живая ошибка: после удаления долгов и дней рождения люди оставались в досье пустыми."""
+    a, llm = make(tmp_path)
+    say(a, llm, "x", intent="CREATE_BIRTHDAY", person="Мама", bday_text="12 марта")
+    say(a, llm, "Максим должен мне 3000", intent="CREATE_DEBT", person="Максим", direction="owes_me",
+        amount_text="3000")
+    say(a, llm, "x", intent="CREATE_BIRTHDAY", person="Лёша", bday_text="15 сентября")
+    say(a, llm, "x", intent="CREATE_PERSON", person="Анна")              # досье заведено явно
+    say(a, llm, "x", intent="UPDATE_PERSON", person="Лёша", dossier={"job": "тренер"})
+    # удаляем день рождения мамы и закрываем долг Максима
+    a.handle_callback("bd:del:" + str(next(b.id for b in a.birthdays.all(a.today())
+                                          if a._name(b.person_id) == "Мама")))
+    say(a, llm, "Максим вернул долг", intent="REPAY_DEBT", person="Максим", direction="owes_me")
+    names = [c.full_name for c in a.dossier.all()]
+    assert names == ["Анна", "Лёша"]
+    # Лёша без дня рождения остаётся — о нём есть сведения
+    a.handle_callback("bd:del:" + str(a.birthdays.all(a.today())[0].id))
+    assert [c.full_name for c in a.dossier.all()] == ["Анна", "Лёша"]
