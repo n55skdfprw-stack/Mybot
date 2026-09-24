@@ -8,7 +8,7 @@ from typing import Iterator
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -162,6 +162,64 @@ CREATE TABLE IF NOT EXISTS birthdays (
     UNIQUE (user_id, person_id)
 );
 
+-- Медкарта: болезни, лекарства, напоминания о приёме, аллергии, врачи.
+CREATE TABLE IF NOT EXISTS med_cases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    title TEXT NOT NULL,             -- болезнь: «Ангина»
+    started TEXT NOT NULL,           -- YYYY-MM-DD
+    ended TEXT,                      -- дата выздоровления, NULL — болею сейчас
+    doctor TEXT,
+    notes TEXT,                      -- другие назначения: «полоскать горло»
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS med_drugs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    case_id INTEGER NOT NULL REFERENCES med_cases(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    dose TEXT,                       -- «1 таблетка», «5 капель», «500 мг»
+    per_day INTEGER,
+    times TEXT,                      -- «08:00,20:00»
+    meal TEXT,                       -- «до еды», «после еды», «во время еды»
+    days INTEGER,
+    start_date TEXT NOT NULL,
+    end_date TEXT,                   -- последний день курса
+    stopped INTEGER NOT NULL DEFAULT 0,
+    note TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS med_doses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    drug_id INTEGER NOT NULL REFERENCES med_drugs(id) ON DELETE CASCADE,
+    due_at TEXT NOT NULL,            -- ISO: когда напомнить
+    status TEXT NOT NULL,            -- pending (отложено), sent, taken
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_med_doses ON med_doses (drug_id, due_at);
+
+CREATE TABLE IF NOT EXISTS med_allergies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    text TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS med_contacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    name TEXT NOT NULL,              -- «Иванова Анна Петровна» или «Поликлиника №5»
+    specialty TEXT,                  -- «терапевт»
+    phone TEXT,
+    place TEXT,                      -- клиника, адрес
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 """
 
@@ -191,7 +249,8 @@ class Database:
         """Полная очистка данных пользователя (сам пользователь остаётся). Одна транзакция."""
         with self.connect() as conn:
             for table in ("notifications", "events", "recurrences", "tasks", "notes", "conversation_context",
-                          "debts", "financial_operations", "birthdays", "people"):
+                          "debts", "financial_operations", "birthdays", "people",
+                          "med_doses", "med_drugs", "med_cases", "med_allergies", "med_contacts"):
                 conn.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
 
     def migrate(self) -> None:

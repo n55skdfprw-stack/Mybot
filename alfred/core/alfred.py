@@ -31,6 +31,9 @@ from .finance import FinanceMixin
 from .birthdays import BirthdayMixin
 from .dossier import DossierMixin
 from .weather import WEATHER_INTENTS, WeatherMixin
+from .med import MED_INTENTS, MedMixin
+from ..database.med_repo import MedRepository
+from ..services.med import MedService
 from ..database.repositories import UserRepository
 from ..services.weather import WeatherService
 from ..database.dossier_repo import DossierRepository
@@ -53,7 +56,7 @@ RESTORE_RE = re.compile(
 )
 
 
-class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMixin):
+class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMixin, MedMixin):
     def __init__(self, brain: Brain, tasks: TaskService, notes: NoteService, schedule: ScheduleService,
                  context: ContextRepository, user_id: int, tz: ZoneInfo,
                  clock: Optional[Callable[[], datetime]] = None, *,
@@ -72,6 +75,7 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
         self.dossier = DossierService(DossierRepository(db), user_id)
         self.weather = weather or WeatherService()
         self.users = UserRepository(db)
+        self.med = MedService(MedRepository(db), user_id)
         self._rates = None
         self.context = context
         self.user_id = user_id
@@ -128,6 +132,10 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
             op = self.finance.get(ctx.entity_id)
             if op:
                 return f"финансовая запись: {F.op_line(op)}"
+        if ctx.entity_type == "med_case" and ctx.entity_id:
+            c = self.med.case(ctx.entity_id)
+            if c:
+                return f"медкарта: {c.title}" + (" (болеет сейчас)" if c.ended is None else " (выздоровел)")
         if ctx.entity_type == "person" and ctx.entity_id:
             c = self.dossier.get(ctx.entity_id)
             if c:
@@ -188,6 +196,8 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
             return self.birthdays_view()
         if button == T.MENU_DOSSIER:
             return self.dossier_view()
+        if button == T.MENU_MED:
+            return self.medcard_view()
         return Reply(T.SECTION_NOT_READY)
 
     async def handle_text(self, text: str) -> Reply:
@@ -222,6 +232,7 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
         result = self._guard_finance(result, text)
         result = self._guard_birthday(result, text)
         result = self._guard_dossier(result, text)
+        result = self._guard_med(result, text)
         if result.intent in WEATHER_INTENTS:
             return await self._weather_intent(result)
         await self._prefetch_rates(result)
@@ -267,7 +278,9 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
             if ctx.intent and ctx.missing_parameter and r.answer:
                 pending = self._load(ctx.data["result"])
                 pending = replace(pending, **{ctx.missing_parameter: r.answer})
-                self._message = f"{self._message} {r.answer}"
+                # для медкарты добавляем исходные слова: «мелатонин на ночь» + ответ «Бессонница»
+                said = ctx.data.get("said") if pending.intent in MED_INTENTS else None
+                self._message = f"{said} {self._message}" if said else f"{self._message} {r.answer}"
                 self._clear_pending()
                 return self._execute(pending, Context())
             return Reply(T.NOT_UNDERSTOOD)
@@ -316,6 +329,13 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
             "DELETE_PERSON": self._delete_person,
             "SHOW_PERSON": self._show_person,
             "SEARCH_PEOPLE": self._search_people,
+            "MED_CASE": self._med_case,
+            "MED_DRUG": self._med_drug,
+            "MED_RECOVER": self._med_recover,
+            "MED_SHOW": self._med_show,
+            "MED_DELETE": self._med_delete,
+            "MED_ALLERGY": self._med_allergy,
+            "MED_CONTACT": self._med_contact,
             "CREATE_BIRTHDAY": self._create_birthday,
             "UPDATE_BIRTHDAY": self._update_birthday,
             "DELETE_BIRTHDAY": self._delete_birthday,
@@ -325,7 +345,9 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
         return handler(r) if handler else Reply(T.NOT_UNDERSTOOD)
 
     def _ask(self, r: BrainResult, missing: str, question: str) -> Reply:
-        self._set_pending(r.intent, missing, {"result": self._dump(r), "question": question})
+        # «said» — исходные слова: когда придёт ответ, в них могут быть детали (дозировка, время)
+        self._set_pending(r.intent, missing, {"result": self._dump(r), "question": question,
+                                              "said": self._message})
         return Reply(question)
 
     def _ambiguous(self, r: BrainResult, kind: str, items: list) -> Reply:
@@ -671,6 +693,15 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
                 if not action:
                     return Reply(T.CANCELLED, edit=True)
                 return replace(action(r, chosen=person), edit=True)
+            if ctx.data["choose"] == "med_case":
+                case = self.med.case(obj_id)
+                if not case:
+                    return Reply("🎩 Сэр, этой записи уже нет!", edit=True)
+                action = {"MED_DRUG": self._med_drug, "MED_RECOVER": self._med_recover,
+                          "MED_SHOW": self._med_show, "MED_DELETE": self._med_delete}.get(r.intent)
+                if not action:
+                    return Reply(T.CANCELLED, edit=True)
+                return replace(action(r, chosen=case), edit=True)
             if ctx.data["choose"] == "birthday":
                 b = self.birthdays.get(obj_id)
                 if not b:
@@ -707,6 +738,9 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
 
         if kind == "dos":
             return self.dossier_callback(parts)
+
+        if kind == "med":
+            return self.med_callback(parts)
 
         if kind == "sched":
             if parts[1] == "week":

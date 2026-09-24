@@ -2,6 +2,7 @@
 
 - 10:00, 14:00, 18:00 — проверки дел (утром — вместе с погодой и советами) (утренняя пропускается, если сводка пришла с напоминанием о лекции);
 - каждую минуту — напоминания о событиях распорядка;
+- каждую минуту — напоминания о приёме лекарств (медкарта);
 - 12:00 — дни рождения (сегодня, завтра и через неделю — одним сообщением);
 - 19:00 — расписание на завтра;
 - 03:00 — продление повторяющихся событий.
@@ -46,6 +47,13 @@ def build_scheduler(bot: Bot, alfred: Alfred, owner_id: int) -> AsyncIOScheduler
         except Exception:
             log.exception("Reminders failed")
 
+    async def run_med():
+        try:
+            for reply in alfred.collect_med_reminders():
+                await send_reply(bot, owner_id, reply)
+        except Exception:
+            log.exception("Med reminders failed")
+
     async def run_tomorrow():
         try:
             await send_reply(bot, owner_id, alfred.tomorrow_summary())
@@ -69,6 +77,7 @@ def build_scheduler(bot: Bot, alfred: Alfred, owner_id: int) -> AsyncIOScheduler
     for period, hour in CHECKS.items():
         scheduler.add_job(run_check, "cron", hour=hour, minute=0, args=[period], id=f"check_{period}", **common)
     scheduler.add_job(run_reminders, "interval", seconds=60, id="reminders", **common)
+    scheduler.add_job(run_med, "interval", seconds=60, id="med", **common)
     scheduler.add_job(run_birthdays, "cron", hour=12, minute=0, id="birthdays", **common)
     scheduler.add_job(run_tomorrow, "cron", hour=19, minute=0, id="tomorrow", **common)
     scheduler.add_job(run_extend, "cron", hour=3, minute=0, id="extend", **common)

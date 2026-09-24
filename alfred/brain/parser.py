@@ -62,6 +62,8 @@ class BrainResult:
     dossier: Optional[dict] = None
     dossier_remove: bool = False
     city: Optional[str] = None
+    med: Optional[dict] = None
+    illness: Optional[str] = None
 
 
 class ParseError(Exception):
@@ -176,4 +178,6 @@ def parse(raw: str) -> BrainResult:
         dossier=_dossier(data.get("dossier")),
         dossier_remove=data.get("dossier_remove") is True,
         city=_str(data.get("city")),
+        med=data.get("med") if isinstance(data.get("med"), dict) else None,
+        illness=_str((data.get("med") or {}).get("illness")) if isinstance(data.get("med"), dict) else None,
     )

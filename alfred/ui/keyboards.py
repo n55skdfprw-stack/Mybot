@@ -14,7 +14,7 @@ def main_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=T.MENU_TASKS), KeyboardButton(text=T.MENU_SCHEDULE)],
             [KeyboardButton(text=T.MENU_NOTES), KeyboardButton(text=T.MENU_FINANCE)],
             [KeyboardButton(text=T.MENU_BIRTHDAYS), KeyboardButton(text=T.MENU_DOSSIER)],
-            [KeyboardButton(text=T.MENU_WEATHER)],
+            [KeyboardButton(text=T.MENU_WEATHER), KeyboardButton(text=T.MENU_MED)],
         ],
         resize_keyboard=True,
         is_persistent=True,

@@ -14,6 +14,7 @@ INTENTS = [
     "CREATE_BIRTHDAY", "UPDATE_BIRTHDAY", "DELETE_BIRTHDAY", "SHOW_BIRTHDAYS",
     "CREATE_PERSON", "UPDATE_PERSON", "DELETE_PERSON", "SHOW_PERSON", "SEARCH_PEOPLE",
     "SHOW_WEATHER", "SET_CITY", "TIME_IN_CITY",
+    "MED_CASE", "MED_DRUG", "MED_RECOVER", "MED_SHOW", "MED_DELETE", "MED_ALLERGY", "MED_CONTACT",
     "ANSWER", "CANCEL", "GREETING", "THANKS", "OTHER_SECTION", "UNKNOWN",
 ]
 
@@ -21,7 +22,7 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 Твоя единственная задача: разобрать сообщение пользователя и вернуть ОДИН JSON-объект. Никакого текста вокруг JSON.
 
 Поля JSON (лишние поля не добавляй, неизвестные ставь null):
-- "intent": одно из: CREATE_TASK, UPDATE_TASK, COMPLETE_TASK, RESTORE_TASK, DELETE_TASK, SHOW_TASKS, CREATE_NOTE, UPDATE_NOTE, DELETE_NOTE, SEARCH_NOTE, SHOW_NOTES, CREATE_EVENT, UPDATE_EVENT, DELETE_EVENT, SHOW_SCHEDULE, CREATE_EXPENSE, CREATE_INCOME, UPDATE_FINANCE, DELETE_FINANCE, SEARCH_FINANCE, SHOW_STATISTICS, SHOW_BALANCE, CREATE_DEBT, UPDATE_DEBT, REPAY_DEBT, DELETE_DEBT, SHOW_DEBTS, SHOW_CURRENCY_RATES, CONVERT_CURRENCY, CREATE_BIRTHDAY, UPDATE_BIRTHDAY, DELETE_BIRTHDAY, SHOW_BIRTHDAYS, CREATE_PERSON, UPDATE_PERSON, DELETE_PERSON, SHOW_PERSON, SEARCH_PEOPLE, SHOW_WEATHER, SET_CITY, TIME_IN_CITY, ANSWER, CANCEL, GREETING, THANKS, OTHER_SECTION, UNKNOWN
+- "intent": одно из: CREATE_TASK, UPDATE_TASK, COMPLETE_TASK, RESTORE_TASK, DELETE_TASK, SHOW_TASKS, CREATE_NOTE, UPDATE_NOTE, DELETE_NOTE, SEARCH_NOTE, SHOW_NOTES, CREATE_EVENT, UPDATE_EVENT, DELETE_EVENT, SHOW_SCHEDULE, CREATE_EXPENSE, CREATE_INCOME, UPDATE_FINANCE, DELETE_FINANCE, SEARCH_FINANCE, SHOW_STATISTICS, SHOW_BALANCE, CREATE_DEBT, UPDATE_DEBT, REPAY_DEBT, DELETE_DEBT, SHOW_DEBTS, SHOW_CURRENCY_RATES, CONVERT_CURRENCY, CREATE_BIRTHDAY, UPDATE_BIRTHDAY, DELETE_BIRTHDAY, SHOW_BIRTHDAYS, CREATE_PERSON, UPDATE_PERSON, DELETE_PERSON, SHOW_PERSON, SEARCH_PEOPLE, SHOW_WEATHER, SET_CITY, TIME_IN_CITY, MED_CASE, MED_DRUG, MED_RECOVER, MED_SHOW, MED_DELETE, MED_ALLERGY, MED_CONTACT, ANSWER, CANCEL, GREETING, THANKS, OTHER_SECTION, UNKNOWN
 - "title": название нового дела, коротко, с большой буквы, БЕЗ слов о дате, глагол в неопределённой форме: «Подготовить отчёт», «Купить хлеб», «Позвонить маме» (а не «Подготовь отчёт») (строка или null)
 - "due_when": слова пользователя о дате дела, дословно, как он их написал: «завтра», «в пятницу», «15 октября», «через 3 дня» (строка или null). Сам дату НЕ вычисляй. Если пользователь дату не называл — due_when: null (НЕ ставь «сегодня» от себя).
 - "target": как пользователь назвал существующее дело/заметку, которое нужно найти (строка или null). Если пользователь говорит «её», «его», «это», «последнее» и имеет в виду последний объект из контекста — пиши "LAST".
@@ -35,6 +36,7 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 - "scope": "all", если действие относится ко ВСЕМ делам/заметкам, иначе "one"
 - "force_duplicate": true, только если пользователь явно просит «ещё одно», «ещё раз добавь»
 - "answer": если Альфред задал вопрос (см. ожидание ниже) и сообщение — ответ на него, то intent = "ANSWER", а сюда — суть ответа
+- "med": для медкарты — объект: "illness" (болезнь, коротко: «Ангина», «ОРВИ»), "doctor" (какой врач назначил), "notes" (другие назначения без лекарств: «полоскать горло»), "drugs" — список лекарств, у каждого: "name", "dose" («1 таблетка», «2 капли», «500 мг»), "per_day" (сколько раз в день, число), "times" (["08:00","20:00"], если названо время), "meal" («до еды», «после еды», «во время еды», «натощак»), "days" (сколько дней, число), "note"; "action" для MED_DRUG: "add" (добавить), "change" (изменить приём), "stop" (перестал принимать); "drug" — название лекарства для change/stop; "allergy" — на что аллергия; "contact" — врач: {"name","specialty","phone","place"}; "remove": true — убрать; "query" — что искать в медкарте
 - "city": город в именительном падеже («Москва», «Токио», «Сочи») или null. «Я дома», «Вернулся домой» — "HOME"
 - "dossier": сведения о человеке для досье — объект, только названные поля: "phone" (телефон), "address" (адрес), "job" (работа, должность), "first_name", "last_name" (фамилия), "interests" (интересы), "preferences" (предпочтения), "likes" (что любит), "dislikes" (что не любит), "facts" (любые другие важные факты). Значения — коротко, как сказал пользователь (или null)
 - "dossier_remove": true, если сведения нужно УБРАТЬ из досье («больше не любит кофе», «удали адрес Сергея»)
@@ -99,6 +101,7 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 - Дни рождения: «У мамы день рождения 12 марта», «Сергей родился 5 мая 1998» — CREATE_BIRTHDAY (person — чей, в именительном падеже: «Мама», «Сергей»; bday_text — дата). «У Сергея день рождения не 5, а 6 мая», а также «Не 12, а 14 марта», если последний объект разговора — день рождения, — UPDATE_BIRTHDAY. «Удали день рождения Сергея» — DELETE_BIRTHDAY. «Когда день рождения у мамы?», «Покажи дни рождения», «У кого скоро день рождения?» — SHOW_BIRTHDAYS (person — если назван).
 - Досье (человек и сведения о нём): «Создай досье на Сергея Афанасьева» — CREATE_PERSON. «Запиши номер Сергея +7…», «Сергей работает тренером», «Маша любит пионы», «Олег не любит опоздания», «Добавь в досье Сергея, что у него есть собака», «Фамилия Сергея — Афанасьев» — UPDATE_PERSON (person + dossier). «Сергей больше не любит кофе», «Удали адрес Сергея» — UPDATE_PERSON с dossier_remove: true. «Покажи досье Сергея», «Что я знаю о Маше?», «Какой номер у Сергея?» — SHOW_PERSON. «Кто работает тренером?», «Кто любит кофе?» — SEARCH_PEOPLE (query — что искать: «тренер», «кофе»). «Удали досье Сергея» — DELETE_PERSON. Если о человеке говорили только что и имя не названо («Добавь ему телефон…») — person: null.
 - Погода: «Какая погода?», «Погода на завтра», «Будет ли дождь?», «Погода на неделю» — SHOW_WEATHER; «Погода в Сочи» — SHOW_WEATHER с city. «Я в Москве», «Я уехал в Казань» — SET_CITY (city: «Москва»); «Я дома», «Я в Питере», «Вернулся домой» — SET_CITY (city: "HOME").
+- Медкарта (болезни и лечение): «Заболел ангиной, врач назначил амоксициллин 500 мг 3 раза в день после еды 7 дней» — MED_CASE. «Врач добавил нурофен при температуре», «Ещё назначили називин по 2 капли 3 раза в день» — MED_DRUG (action: add). «Пить амоксициллин не 3, а 2 раза в день» — MED_DRUG (action: change, drug). «Перестал пить нурофен» — MED_DRUG (action: stop). «Я выздоровел», «Поправился» — MED_RECOVER. «Чем я лечил ангину?», «Что мне назначали от кашля?», «Покажи медкарту» — MED_SHOW (query). «Удали из медкарты ангину» — MED_DELETE. «У меня аллергия на пенициллин» — MED_ALLERGY (allergy); «Аллергии на пыльцу больше нет» — MED_ALLERGY с remove. «Мой терапевт — Иванова Анна Петровна, поликлиника №5, телефон …» — MED_CONTACT (contact); «Какой телефон у моего стоматолога?» — MED_CONTACT (contact.name: «стоматолог»). Лекарства и болезни — это медкарта, а НЕ дела и НЕ заметки.
 - Время в другом городе: «Сколько сейчас времени в Токио?», «Который час в Нью-Йорке?» — TIME_IN_CITY (city).
 - «Отмена», «не надо», «забудь» — CANCEL. Приветствие — GREETING. Благодарность — THANKS.
 - Если непонятно — UNKNOWN. Ничего не выдумывай.
@@ -147,6 +150,9 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 
 Пример 17. Сообщение: «Я в Москве» →
 {"intent":"SET_CITY","city":"Москва","scope":"one"}
+
+Пример 18. Сообщение: «Заболел ангиной, терапевт назначил амоксициллин 500 мг 3 раза в день после еды 7 дней и полоскать горло» →
+{"intent":"MED_CASE","med":{"illness":"Ангина","doctor":"терапевт","notes":"полоскать горло","drugs":[{"name":"Амоксициллин","dose":"500 мг","per_day":3,"meal":"после еды","days":7}]},"scope":"one"}
 
 Пример 2. Сообщение: «Запиши, что паспорт лежит в верхнем ящике» →
 {"intent":"CREATE_NOTE","content":"Паспорт лежит в верхнем ящике","scope":"one"}
