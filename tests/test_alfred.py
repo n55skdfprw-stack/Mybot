@@ -375,7 +375,7 @@ def test_titles_capitalized(tmp_path):
     a, llm, _ = make(tmp_path)
     llm.said(intent="CREATE_TASK", title="купить молоко")
     r = run(a.handle_text("купить молоко"))
-    assert a.tasks.active()[0].title == "Купить молоко" and "☐ Купить молоко" in r.text
+    assert a.tasks.active()[0].title == "Купить молоко" and "⭕ Купить молоко" in r.text
 
 
 def test_tasks_view_has_no_hint_phrase(tmp_path):

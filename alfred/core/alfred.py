@@ -287,7 +287,7 @@ class Alfred(ScheduleMixin, FinanceMixin):
                                            "choose": kind})
         if kind == "task":
             text = "🎩 Сэр, уточните, пожалуйста, какое именно дело?"
-            rows = [[("☐ " + T.short(t.title) + T.due_label(t.due_date, self.today()), f"pick:{t.id}")]
+            rows = [[("⭕ " + T.short(t.title) + T.due_label(t.due_date, self.today()), f"pick:{t.id}")]
                     for t in items[:8]]
         else:
             text = "🎩 Сэр, уточните, пожалуйста, какую именно заметку?"
@@ -524,7 +524,7 @@ class Alfred(ScheduleMixin, FinanceMixin):
         buttons = [
             [("👋 Пока что всё, Альфред!", f"chk:enough:{period}")],
             [("🔥 Весь в делах, Альфред!", f"chk:busy:{period}")],
-            [("☑️ Вычеркни все, Альфред, благодарю!", f"chk:all:{period}")],
+            [("🟢 Вычеркни все, Альфред, благодарю!", f"chk:all:{period}")],
         ]
         return Reply(f"{head}\n\n{body}", buttons=buttons)
 

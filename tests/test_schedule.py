@@ -141,7 +141,7 @@ def test_morning_merged_with_lecture_and_tasks(tmp_path):
     [(nid, reply)] = a.collect_reminders()
     assert reply.text.startswith("🎩 Доброе утро, Сэр!")
     assert "Через час, в 10:00, у вас начинается лекция!" in reply.text
-    assert "🚪 Аудитория 304" in reply.text and "☐ Купить корм коту" in reply.text
+    assert "🚪 Аудитория 304" in reply.text and "⭕ Купить корм коту" in reply.text
     a.mark_reminder(nid, sent=True)
     clock.set(2026, 9, 24, 10, 0)
     assert a.check_message("morning") is None  # вторую сводку в 10:00 не шлём

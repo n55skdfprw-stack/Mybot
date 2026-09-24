@@ -84,7 +84,7 @@ def due_phrase(d: date | None, today: date) -> str:
 
 
 def task_line(t: Task, today: date, done: bool = False) -> str:
-    box = "☑" if done else "☐"
+    box = "🟢" if done else "⭕"
     title = t.title[:1].upper() + t.title[1:]
     return f"{box} {title}{due_label(t.due_date, today)}"
 
