@@ -61,6 +61,7 @@ class BrainResult:
     bday_text: Optional[str] = None
     dossier: Optional[dict] = None
     dossier_remove: bool = False
+    city: Optional[str] = None
 
 
 class ParseError(Exception):
@@ -174,4 +175,5 @@ def parse(raw: str) -> BrainResult:
         bday_text=_str(data.get("bday_text")),
         dossier=_dossier(data.get("dossier")),
         dossier_remove=data.get("dossier_remove") is True,
+        city=_str(data.get("city")),
     )

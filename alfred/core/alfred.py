@@ -30,6 +30,9 @@ from ..ui import finance_texts as F
 from .finance import FinanceMixin
 from .birthdays import BirthdayMixin
 from .dossier import DossierMixin
+from .weather import WEATHER_INTENTS, WeatherMixin
+from ..database.repositories import UserRepository
+from ..services.weather import WeatherService
 from ..database.dossier_repo import DossierRepository
 from ..services.dossier import DossierService
 from ..database.birthday_repo import BirthdayRepository
@@ -50,12 +53,13 @@ RESTORE_RE = re.compile(
 )
 
 
-class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin):
+class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMixin):
     def __init__(self, brain: Brain, tasks: TaskService, notes: NoteService, schedule: ScheduleService,
                  context: ContextRepository, user_id: int, tz: ZoneInfo,
                  clock: Optional[Callable[[], datetime]] = None, *,
                  finance: Optional[FinanceService] = None, debts: Optional[DebtService] = None,
-                 currency: Optional[CurrencyService] = None, birthdays: Optional[BirthdayService] = None):
+                 currency: Optional[CurrencyService] = None, birthdays: Optional[BirthdayService] = None,
+                 weather: Optional[WeatherService] = None):
         self.brain = brain
         self.tasks = tasks
         self.notes = notes
@@ -66,6 +70,8 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin):
         self.currency = currency or CurrencyService()
         self.birthdays = birthdays or BirthdayService(BirthdayRepository(db), user_id)
         self.dossier = DossierService(DossierRepository(db), user_id)
+        self.weather = weather or WeatherService()
+        self.users = UserRepository(db)
         self._rates = None
         self.context = context
         self.user_id = user_id
@@ -190,6 +196,9 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin):
         self._raw_text = text  # ровно то, что написал пользователь, без подстановок ИИ
         if search.normalize(text).strip(" .!") in T.CANCEL_WORDS:
             return Reply(T.CANCELLED if self._clear_pending() else T.NOTHING_TO_CANCEL)
+        if text == T.MENU_WEATHER:
+            self._clear_pending()
+            return await self.weather_view()
         if text in T.MENU_BUTTONS:
             return self.open_section(text)
 
@@ -213,6 +222,8 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin):
         result = self._guard_finance(result, text)
         result = self._guard_birthday(result, text)
         result = self._guard_dossier(result, text)
+        if result.intent in WEATHER_INTENTS:
+            return await self._weather_intent(result)
         await self._prefetch_rates(result)
         try:
             return self._execute(result, ctx)
@@ -558,9 +569,13 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin):
         return Reply(f"🎩 Ваши заметки, Сэр!\n\n{lines}{tail}")
 
     # ------------------------------------------------------------------ проверки 10:00 / 14:00 / 18:00
-    def check_message(self, period: str) -> Optional[Reply]:
+    def check_message(self, period: str, weather: Optional[str] = None) -> Optional[Reply]:
         today = self.today()
         relevant = self.tasks.relevant(today)
+        if period == "morning" and weather and (not relevant or self.schedule.morning_merged(today)):
+            # дел нет (или список уже пришёл с напоминанием о лекции) — присылаем только погоду
+            head = "Погода на сегодня" if self.schedule.morning_merged(today) else T.day_greeting(self.now())
+            return Reply(f"🎩 {head}, Сэр!\n\n{weather}")
         if not relevant:
             return None  # нечего напоминать — не беспокоим
         open_lines = "\n".join(T.task_line(t, today) for t in relevant)
@@ -568,7 +583,8 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin):
         if period == "morning":
             if self.schedule.morning_merged(today):
                 return None  # сводка уже пришла вместе с напоминанием о лекции
-            text = f"🎩 {T.day_greeting(self.now())}, Сэр!\n\nВот актуальный список дел!\n\n{open_lines}"
+            wx = f"{weather}\n\n" if weather else ""
+            text = f"🎩 {T.day_greeting(self.now())}, Сэр!\n\n{wx}Вот актуальный список дел!\n\n{open_lines}"
             buttons = [[("❌ Не актуально!", "chk:notactual"), ("👍 Спасибо, Альфред!", "chk:thanks")]]
             return Reply(text, buttons=buttons)
 

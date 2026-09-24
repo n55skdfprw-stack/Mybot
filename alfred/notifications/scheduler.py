@@ -1,6 +1,6 @@
 """Плановые задачи Альфреда.
 
-- 10:00, 14:00, 18:00 — проверки дел (утренняя пропускается, если сводка пришла с напоминанием о лекции);
+- 10:00, 14:00, 18:00 — проверки дел (утром — вместе с погодой и советами) (утренняя пропускается, если сводка пришла с напоминанием о лекции);
 - каждую минуту — напоминания о событиях распорядка;
 - 12:00 — дни рождения (сегодня, завтра и через неделю — одним сообщением);
 - 19:00 — расписание на завтра;
@@ -28,7 +28,8 @@ def build_scheduler(bot: Bot, alfred: Alfred, owner_id: int) -> AsyncIOScheduler
 
     async def run_check(period: str):
         try:
-            reply = alfred.check_message(period)
+            weather = await alfred.morning_weather() if period == "morning" else None
+            reply = alfred.check_message(period, weather=weather)
             if reply:
                 await send_reply(bot, owner_id, reply)
         except Exception:

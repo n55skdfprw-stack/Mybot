@@ -73,6 +73,17 @@ class UserRepository:
             )
             return cur.lastrowid
 
+    def city(self, user_id: int) -> Optional[str]:
+        with self.db.connect() as conn:
+            row = conn.execute("SELECT current_city, home_city FROM users WHERE id=?", (user_id,)).fetchone()
+        return (row["current_city"] or row["home_city"]) if row else None
+
+    def set_city(self, user_id: int, city: Optional[str]) -> None:
+        """None — вернуться в домашний город."""
+        with self.db.connect() as conn:
+            conn.execute("UPDATE users SET current_city=COALESCE(?, home_city), updated_at=? WHERE id=?",
+                         (city, _now(), user_id))
+
 
 class TaskRepository:
     def __init__(self, db: Database):
