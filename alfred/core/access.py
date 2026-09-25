@@ -126,6 +126,16 @@ class Access:
     def stop_for_all(self, stopped: bool) -> None:
         self.users.set_setting("stopped_for_all", "1" if stopped else "0")
 
+    @property
+    def notify_maintenance(self) -> bool:
+        return self.users.setting("notify_maintenance") != "0"      # по умолчанию — предупреждаем
+
+    def set_notify_maintenance(self, on: bool) -> None:
+        self.users.set_setting("notify_maintenance", "1" if on else "0")
+
+    def guests_to_notify(self) -> list[Account]:
+        return [a for a in self.users.accounts() if a.role != "owner" and a.status == "active" and not a.paused]
+
     def active(self) -> list[tuple[Account, Alfred]]:
         """Кому сейчас слать сводки и напоминания: не на паузе, доступ открыт, Альфред не остановлен для всех."""
         if self.stopped_for_all:

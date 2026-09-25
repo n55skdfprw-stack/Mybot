@@ -45,6 +45,8 @@ FLAGS = {"USD": "🇺🇸 Доллар", "EUR": "🇪🇺 Евро", "CNY": "�
 RATE_WORDS = re.compile(r"\b(курс\w*|какой|какая|сколько|стоит|сейчас|сегодня|цб|по|у|на|к|рублю|рублям)\b")
 PURCHASE_RE = re.compile(r"\b(потратил\w*|купил\w*|заплатил\w*|оплатил\w*|отдал\w*\s+за)\b", re.IGNORECASE)
 TOPUP_RE = re.compile(r"\bпополн\w*", re.IGNORECASE)
+INCOME_RE = re.compile(r"\b(зп|з/п|зарплат\w*|аванс\w*|преми\w*|стипенди\w*|пенси\w*|кэшбэк\w*|кешбэк\w*|"
+                       r"получил\w*|пришл\w*|пришёл|пришел|заработал\w*|вернули|возврат\w*|доход\w*)\b", re.IGNORECASE)
 # На эти вопросы Альфреда короткий ответ — это всегда ответ, а не новая команда.
 SHORT_ANSWER_PARAMS = {"category", "person", "amount_text", "new_amount_text", "bday_text", "query"}
 
@@ -97,6 +99,9 @@ class FinanceMixin:
         from dataclasses import replace
         if r.intent == "CREATE_TASK" and PURCHASE_RE.search(text) and parse_amount(text):
             return replace(r, intent="CREATE_EXPENSE", amount_text=None, category=None, description=r.title)
+        # «Зп 1000», «Пришла премия 5000» — это доход, а не расход.
+        if r.intent == "CREATE_EXPENSE" and INCOME_RE.search(text) and not PURCHASE_RE.search(text):
+            return replace(r, intent="CREATE_INCOME")
         # «Пополнил БСК на 1000», «Оплатил связь» — это трата, а не доход.
         if r.intent == "CREATE_INCOME" and (
                 PURCHASE_RE.search(text) or
@@ -194,7 +199,7 @@ class FinanceMixin:
         op = self.finance.add(op_type, rub, category, detail or r.description, self._op_day(r), orig, cur)
         self._set_last("finance", op.id)
         amount = F.money(op.amount) + (f" ({F.money(orig, cur)})" if cur else "")
-        what = f" — {category.lower()}" if category else ""
+        what = f" — {category[:1].upper() + category[1:]}" if category else ""
         kind = "Расход" if op_type == "expense" else "Доход"
         when = "" if op.date == self.today() else f" ({_day_short(op.date)})"
         return Reply(f"🎩 Записал, Сэр!\n{kind}: {amount}{what}{when}!")

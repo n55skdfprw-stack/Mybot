@@ -170,3 +170,26 @@ def test_move_note_to_dossier(tmp_path):
     assert r.text.startswith("🎩 Готово, Сэр! Перенёс заметку в досье.\n\n👤 Вася Пупкин")
     assert a.notes.all() == []
     assert a.dossier.all()[0].important_facts == "Должник"
+
+
+def test_rename_poменяй_and_fact_about_known_person(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "У Дианы др 5 мая", intent="CREATE_BIRTHDAY", person="Диана", bday_text="5 мая")
+    r = run(a.handle_text("Поменяй Диана на Диани"))
+    assert "👤 Диана → Диани" in r.text
+    # Альфред спросил дату, а человек написал о другом — это не ответ
+    llm.said(intent="UPDATE_BIRTHDAY", person="Диани")
+    run(a.handle_text("Исправь день рождения Диани"))
+    llm.said(intent="ANSWER", answer="5 мая")                  # ИИ «придумал» ответ
+    llm.said(intent="CREATE_NOTE", content="Диани зануда")      # после повторного разбора
+    r = run(a.handle_text("Диани зануда"))
+    assert r.text.startswith("🎩 Записал, Сэр!\n\n👤 Диани") and a.notes.all() == []
+    assert a.dossier.all()[0].important_facts == "Зануда"
+
+
+def test_move_right_after_note(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "Олег Смирнов должник", intent="CREATE_NOTE", content="Олег Смирнов — должник")
+    llm.said(intent="UPDATE_PERSON", person="Олег Смирнов", dossier={"facts": "должник"})
+    r = run(a.handle_text("Запиши это в досье"))
+    assert r.text.startswith("🎩 Готово, Сэр! Перенёс заметку в досье.") and a.notes.all() == []

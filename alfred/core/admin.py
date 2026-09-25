@@ -43,7 +43,7 @@ class Admin:
             dt = dt.replace(tzinfo=timezone.utc)
         dt = dt.astimezone(self.access.tz)
         days = (self._now().date() - dt.date()).days
-        day = "сегодня" if days == 0 else "вчера" if days == 1 else f"{dt.day} {T.MONTHS_GEN[dt.month - 1][:3]}"
+        day = "сегодня" if days <= 0 else "вчера" if days == 1 else f"{dt.day} {T.MONTHS_GEN[dt.month - 1][:3]}"
         return f"{day} в {dt:%H:%M}"
 
     def _find(self, username: str) -> Optional[Account]:
@@ -209,7 +209,10 @@ class Admin:
             stop = [("▶️ Запустить для всех", "adm:startall")]
         else:
             stop = [("⏹ Остановить для всех", "adm:stopall")]
-        return Reply(text, buttons=[[("🔄 Обновить", "adm:sys"), ("👥 Пользователи", "adm:users")], stop], edit=edit)
+        bell = "🔔 Предупреждать гостей о техработах: вкл" if self.access.notify_maintenance \
+            else "🔕 Предупреждать гостей о техработах: выкл"
+        return Reply(text, buttons=[[("🔄 Обновить", "adm:sys"), ("👥 Пользователи", "adm:users")], stop,
+                                    [(bell, "adm:notif")]], edit=edit)
 
     # ------------------------------------------------------------ кнопки
     async def callback(self, data: str) -> Reply:
@@ -232,6 +235,9 @@ class Admin:
         if action == "unl" and num and len(parts) > 3:
             self.users.set_limit(num, 0 if parts[3] == "1" else None)   # None — лимит по умолчанию
             return self.user_card(num)
+        if action == "notif":
+            self.access.set_notify_maintenance(not self.access.notify_maintenance)
+            return await self.system_view(edit=True)
         if action in ("stopall", "startall"):
             self.access.stop_for_all(action == "stopall")
             return await self.system_view(edit=True)

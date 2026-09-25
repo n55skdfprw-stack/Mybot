@@ -47,6 +47,7 @@ async def main() -> None:
 
     bot = Bot(token=config.telegram_token)
     await bot.set_my_commands([BotCommand(command="start", description="🎩 Приветствую, Альфред!"),
+                               BotCommand(command="help", description="❓ Что умеет Альфред"),
                                BotCommand(command="pause", description="⏸ Пауза — Альфред замолчит"),
                                BotCommand(command="resume", description="▶️ Продолжить"),
                                BotCommand(command="clean", description="🧹 Чистый лист — удалить всё")])

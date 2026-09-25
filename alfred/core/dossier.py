@@ -15,13 +15,16 @@ from .reply import Reply
 
 NAME_WORD = r"([А-ЯЁA-Zа-яёa-z][а-яёa-z\-]+(?:\s+[А-ЯЁA-Z][а-яёa-z\-]+)?)"
 RENAME_RES = [
-    re.compile(rf"переименуй\s+{NAME_WORD}\s+в\s+{NAME_WORD}", re.I),                        # кого → как
+    re.compile(rf"(?:переименуй|поменяй|измени|исправь|замени)\s+(?!имя\b){NAME_WORD}\s+(?:в|на)\s+{NAME_WORD}",
+               re.I),                                                                          # кого → как
     re.compile(rf"(?:исправь|измени|поменяй)\s+имя\s+(?:на\s+){NAME_WORD}", re.I),           # последний
     re.compile(rf"(?:правильно|правильное имя|его зовут|её зовут|ее зовут)\s*[:—-]?\s*{NAME_WORD}\s*$", re.I),
     re.compile(rf"имя\s+не\s+\S+,?\s+а\s+{NAME_WORD}", re.I),
 ]
 MOVE_NOTE_RE = re.compile(r"(?:из\s+замет\w*|заметк\w*).*(?:в\s+досье)|(?:в\s+досье).*(?:из\s+замет\w*|заметк\w*)",
                           re.I)
+MOVE_LAST_RE = re.compile(r"^(?:перенеси|перемести|запиши|напиши|добавь|сохрани)\s+(?:это\s+|её\s+|ее\s+|его\s+)?"
+                          r"(?:лучше\s+)?в\s+досье[.!]*$", re.I)
 
 DOS_INTENTS = {"CREATE_PERSON", "UPDATE_PERSON", "DELETE_PERSON", "SHOW_PERSON", "SEARCH_PEOPLE"}
 LIST_LIMIT = 10
@@ -121,9 +124,10 @@ class DossierMixin:
 
     async def try_move_note(self, text: str) -> Optional[Reply]:
         """«Удали из заметок и запиши в досье» — переносим последнюю заметку в досье."""
-        if not MOVE_NOTE_RE.search(text):
-            return None
         ctx = self._ctx()
+        right_after_note = ctx.entity_type == "note" and MOVE_LAST_RE.search(text.strip())
+        if not (MOVE_NOTE_RE.search(text) or right_after_note):
+            return None
         note = self.notes.get(ctx.entity_id) if ctx.entity_type == "note" and ctx.entity_id else None
         if note is None:
             notes = self.notes.all()
@@ -155,7 +159,31 @@ class DossierMixin:
         # «Запиши номер Сергея +7 900…» — это досье, а не заметка и не дело.
         if r.intent in ("CREATE_NOTE", "CREATE_TASK", "UNKNOWN") and r.person and find_phone(text):
             return replace(r, intent="UPDATE_PERSON", dossier={"phone": find_phone(text)})
+        # «Иннокентий зануда», «Вася Пупкин — должник»: о человеке из досье — пишем в досье, а не в заметки.
+        if r.intent in ("CREATE_NOTE", "UNKNOWN", "UPDATE_BIRTHDAY"):
+            about = self._about_known_person(text)
+            if about:
+                person, fact = about
+                return replace(r, intent="UPDATE_PERSON", person=person, dossier={"facts": fact},
+                               dossier_remove=False)
         return r
+
+    def _about_known_person(self, text: str):
+        """«Иннокентий гандон, так и запиши» → («Иннокентий», «гандон»), если Иннокентий уже есть у Альфреда."""
+        t = re.sub(r",?\s*(так\s+и\s+)?запиши\w*[.!]*$", "", text.strip(), flags=re.I).strip(" .!")
+        words = t.split()
+        if not 2 <= len(words) <= 8:
+            return None
+        for n in (2, 1):
+            name = " ".join(words[:n])
+            if not name[:1].isupper():
+                continue
+            people = self.debts.find_people(name)
+            if len(people) == 1 and len(words) > n:
+                fact = " ".join(words[n:]).lstrip("—-–: ").strip()
+                if fact:
+                    return people[0].full_name, fact
+        return None
 
     # ------------------------------------------------------------ действия
     def _create_person(self, r: BrainResult, chosen: Optional[Person] = None) -> Reply:

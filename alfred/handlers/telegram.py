@@ -190,7 +190,16 @@ def build_router(access: Access, admin: Admin) -> Router:
             if not owner:
                 await callback.answer("Доступ закрыт")
                 return
+            was_stopped = access.stopped_for_all
             reply = await admin.callback(data)
+            if data in ("adm:stopall", "adm:startall") and access.stopped_for_all != was_stopped \
+                    and access.notify_maintenance:
+                note = T.MAINT_ON if access.stopped_for_all else T.MAINT_OFF
+                for guest in access.guests_to_notify():
+                    try:
+                        await send_reply(bot, guest.telegram_id, Reply(note), address=guest.address)
+                    except Exception:
+                        log.exception("Не удалось предупредить %s о техработах", guest.label)
         else:
             reply = await access.alfred_for(v.account).handle_callback_async(data)
         reply = personalize(reply, v.account.address)

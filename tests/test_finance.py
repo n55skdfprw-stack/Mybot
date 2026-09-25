@@ -67,7 +67,7 @@ def say(a, llm, text, **ai):
 def test_expense_as_in_spec(tmp_path):
     a, llm = make(tmp_path)
     r = say(a, llm, "Потратил 2500 на продукты", intent="CREATE_EXPENSE", amount_text="2500", category="продукты")
-    assert r.text == "🎩 Записал, Сэр!\nРасход: 2 500 ₽ — продукты!"
+    assert r.text == "🎩 Записал, Сэр!\nРасход: 2 500 ₽ — Продукты!"
 
 
 def test_expense_without_category_asks(tmp_path):
@@ -75,7 +75,7 @@ def test_expense_without_category_asks(tmp_path):
     r = say(a, llm, "Потратил 700", intent="CREATE_EXPENSE", amount_text="700")
     assert r.text == "🎩 Разумеется, Сэр! На что был расход?"
     r = say(a, llm, "На такси", intent="ANSWER", answer="такси")
-    assert "700 ₽ — такси" in r.text
+    assert "700 ₽ — Такси" in r.text
 
 
 def test_income_without_source_not_asked(tmp_path):
@@ -83,27 +83,27 @@ def test_income_without_source_not_asked(tmp_path):
     r = say(a, llm, "Получил 120000", intent="CREATE_INCOME", amount_text="120000")
     assert r.text == "🎩 Записал, Сэр!\nДоход: 120 000 ₽!"
     r = say(a, llm, "Получил зарплату 120к", intent="CREATE_INCOME", amount_text="120к", category="зарплата")
-    assert "120 000 ₽ — зарплата" in r.text
+    assert "120 000 ₽ — Зарплата" in r.text
 
 
 def test_amount_forms_and_yesterday(tmp_path):
     a, llm = make(tmp_path)
     r = say(a, llm, "Вчера потратил 2,5 тысячи на кафе", intent="CREATE_EXPENSE", amount_text="2,5 тысячи",
             category="кафе", op_when="вчера")
-    assert "2 500 ₽ — рестораны (23 сентября)" in r.text
+    assert "2 500 ₽ — Рестораны (23 сентября)" in r.text
 
 
 def test_purchase_phrase_is_expense_not_task(tmp_path):
     a, llm = make(tmp_path)
     r = say(a, llm, "Купил кроссовки за 8000", intent="CREATE_TASK", title="Купить кроссовки")
-    assert "Расход: 8 000 ₽ — одежда" in r.text and a.tasks.active() == []
+    assert "Расход: 8 000 ₽ — Одежда" in r.text and a.tasks.active() == []
 
 
 def test_foreign_expense_converted(tmp_path):
     a, llm = make(tmp_path)
     r = say(a, llm, "Потратил 50 евро на ужин", intent="CREATE_EXPENSE", amount_text="50 евро",
             currency="евро", category="ужин")
-    assert "4 506 ₽ (50 €) — рестораны" in r.text
+    assert "4 506 ₽ (50 €) — Рестораны" in r.text
 
 
 def test_foreign_expense_without_rates(tmp_path):
@@ -312,7 +312,7 @@ def test_ai_invented_category_is_ignored(tmp_path):
     r = say(a, llm, "Потратил 700", intent="CREATE_EXPENSE", amount_text="700", category="продукты")
     assert r.text == "🎩 Разумеется, Сэр! На что был расход?"
     r = say(a, llm, "На такси", intent="ANSWER", answer="такси")
-    assert "700 ₽ — такси" in r.text
+    assert "700 ₽ — Такси" in r.text
 
 
 def test_correction_picks_record_by_old_amount(tmp_path):
@@ -345,11 +345,11 @@ def test_k_suffix_from_message(tmp_path, text, ai_amount, expected):
 def test_taxi_and_transport_card_are_separate(tmp_path):
     a, llm = make(tmp_path)
     r = say(a, llm, "Потратил 800 на такси", intent="CREATE_EXPENSE", amount_text="800", category="такси")
-    assert r.text == "🎩 Записал, Сэр!\nРасход: 800 ₽ — такси!"
+    assert r.text == "🎩 Записал, Сэр!\nРасход: 800 ₽ — Такси!"
     r = say(a, llm, "Пополнил БСК на 1000", intent="CREATE_EXPENSE", amount_text="1000", category="БСК")
-    assert r.text == "🎩 Записал, Сэр!\nРасход: 1 000 ₽ — транспорт!"
+    assert r.text == "🎩 Записал, Сэр!\nРасход: 1 000 ₽ — Транспорт!"
     r = say(a, llm, "Потратил 70 на метро", intent="CREATE_EXPENSE", amount_text="70", category="метро")
-    assert "— транспорт" in r.text
+    assert "— Транспорт" in r.text
 
 
 def test_debts_header(tmp_path):
@@ -420,7 +420,7 @@ def test_delete_last_debt_by_words(tmp_path):
 def test_topup_transport_card_is_expense(tmp_path):
     a, llm = make(tmp_path)
     r = say(a, llm, "Пополнил бск на 1000", intent="CREATE_INCOME", amount_text="1000", category="транспорт")
-    assert r.text == "🎩 Записал, Сэр!\nРасход: 1 000 ₽ — транспорт!"
+    assert r.text == "🎩 Записал, Сэр!\nРасход: 1 000 ₽ — Транспорт!"
     assert a.finance.latest()[0].type == "expense"
 
 
@@ -437,7 +437,7 @@ def test_short_answer_is_not_search(tmp_path):
     assert r.text == "🎩 Разумеется, Сэр! На что был расход?"
     # ИИ ошибся и принял ответ за поиск — Альфред всё равно понимает, что это ответ
     r = say(a, llm, "Такси", intent="SEARCH_FINANCE", category="такси")
-    assert r.text == "🎩 Записал, Сэр!\nРасход: 1 500 ₽ — такси!"
+    assert r.text == "🎩 Записал, Сэр!\nРасход: 1 500 ₽ — Такси!"
     assert sorted(o.amount for o in a.finance.latest()) == [500, 1500]
 
 
@@ -504,3 +504,25 @@ def test_currency_words_do_not_steal_normal_text():
     assert p("купил батон за 50") is None and p("сумма 300") is None
     assert p("индонезийская рупия") == "IDR" and p("египетский фунт") == "EGP"
     assert p("канадский доллар") == "CAD" and p("сомони") == "TJS" and p("100 сомов") == "KGS"
+
+
+# ---------------------------------------------------------------- 8.7
+
+def test_salary_is_income(tmp_path):
+    """Живая ошибка: «Зп 1000» → «На что был расход?» → «Это зарплата» → записал расход."""
+    a, llm = make(tmp_path)
+    r = say(a, llm, "Зп 1000", intent="CREATE_EXPENSE", amount_text="1000")
+    assert r.text == "🎩 Записал, Сэр!\nДоход: 1 000 ₽!"
+    llm.said(intent="CREATE_EXPENSE", amount_text="700")
+    a._message = ""
+    r = run(a.handle_text("Потратил 700"))
+    assert "На что был расход?" in r.text
+    r = say(a, llm, "Это зарплата", intent="ANSWER", answer="зарплата")
+    assert r.text.startswith("🎩 Записал, Сэр!\nДоход: 700 ₽")
+
+
+def test_help(tmp_path):
+    a, llm = make(tmp_path)
+    for q in ("Что ты умеешь?", "/help", "Расскажи о себе"):
+        r = run(a.handle_text(q))
+        assert r.text.startswith("🎩 С удовольствием расскажу, Сэр!") and "🩺 Медкарта" in r.text

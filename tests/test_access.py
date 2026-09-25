@@ -236,3 +236,18 @@ def test_pause_and_stop_for_all(tmp_path):
     assert r.buttons[1] == [("▶️ Запустить для всех", "adm:startall")]
     run(admin.callback("adm:startall"))
     assert {a.id for a, _ in access.active()} == everyone
+
+
+# ---------------------------------------------------------------- 8.7: техработы
+
+def test_maintenance_toggle_and_guests(tmp_path):
+    access, admin, _ = make(tmp_path)
+    admin.command("добавь @ivan_p")
+    acc = access.who(555, "ivan_p", "Иван").account
+    r = run(admin.system_view())
+    assert r.buttons[2] == [("🔔 Предупреждать гостей о техработах: вкл", "adm:notif")]
+    r = run(admin.callback("adm:notif"))
+    assert r.buttons[2] == [("🔕 Предупреждать гостей о техработах: выкл", "adm:notif")] and not access.notify_maintenance
+    assert [g.id for g in access.guests_to_notify()] == [acc.id]
+    access.users.set_paused(acc.id, True)
+    assert access.guests_to_notify() == []                    # на паузе — не беспокоим

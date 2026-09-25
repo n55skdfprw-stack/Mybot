@@ -27,10 +27,13 @@ from ..database.finance_repo import DebtRepository, OperationRepository, PeopleR
 from ..services.currency import CurrencyService
 from ..services.finance import DebtService, FinanceService
 from ..ui import finance_texts as F
-from .finance import FinanceMixin
+from .finance import INCOME_RE, FinanceMixin
 from .birthdays import BirthdayMixin
 from .dossier import DossierMixin
 from .weather import WEATHER_INTENTS, WeatherMixin
+
+HELP_RE = re.compile(r"^(?:/help|помощь|справка)$|что\s+ты\s+(?:умеешь|можешь)|что\s+умеешь|твои\s+(?:функции|возможности)|"
+                     r"как\s+(?:тобой|с\s+тобой)\s+пользоваться|что\s+ты\s+за\s+бот|расскажи\s+о\s+себе")
 from .med import MED_INTENTS, MedMixin
 from ..database.med_repo import MedRepository
 from ..services.med import MedService
@@ -219,6 +222,9 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
             return await self.weather_view()
         if text in T.MENU_BUTTONS:
             return self.open_section(text)
+        if HELP_RE.search(search.normalize(text)):
+            self._clear_pending()
+            return Reply(T.HELP)
         renamed = self.try_rename(text)
         if renamed:
             return renamed
@@ -246,6 +252,18 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
             )
         except BrainUnavailable:
             return Reply(T.AI_UNAVAILABLE)
+
+        if result.intent == "ANSWER" and ctx.intent and not self._fits_question(ctx.missing_parameter, text):
+            # Альфред ждал дату/сумму, а человек написал о другом — забываем вопрос и разбираем заново
+            self._clear_pending()
+            ctx = self._ctx()
+            try:
+                result = await self.brain.analyze(
+                    text=text, today=self.today(), last_object=self._last_description(ctx), pending=None,
+                    task_titles=[t.title for t in self.tasks.active()],
+                    note_titles=[T.short(n.content, 120) for n in self.notes.all()])
+            except BrainUnavailable:
+                return Reply(T.AI_UNAVAILABLE)
 
         result = self._guard_restore(result, text)
         result = self._guard_event_vs_note(result, text)
@@ -299,6 +317,9 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
             if ctx.intent and ctx.missing_parameter and r.answer:
                 pending = self._load(ctx.data["result"])
                 pending = replace(pending, **{ctx.missing_parameter: r.answer})
+                # «На что был расход?» — «Это зарплата»: значит, это был доход
+                if pending.intent == "CREATE_EXPENSE" and INCOME_RE.search(f"{r.answer} {self._raw_text}"):
+                    pending = replace(pending, intent="CREATE_INCOME")
                 # для медкарты добавляем исходные слова: «мелатонин на ночь» + ответ «Бессонница»
                 said = ctx.data.get("said") if pending.intent in MED_INTENTS else None
                 self._message = f"{said} {self._message}" if said else f"{self._message} {r.answer}"
@@ -364,6 +385,16 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
         }
         handler = handlers.get(r.intent)
         return handler(r) if handler else Reply(T.NOT_UNDERSTOOD)
+
+    def _fits_question(self, missing: Optional[str], text: str) -> bool:
+        """Похож ли ответ на то, что спрашивали: для даты — есть дата, для суммы — есть число."""
+        from ..brain.money import parse_amount
+        from ..services.birthdays import parse_birthday
+        if missing == "bday_text":
+            return parse_birthday(text, self.today()) is not None
+        if missing in ("amount_text", "new_amount_text"):
+            return parse_amount(text) is not None
+        return True
 
     def _ask(self, r: BrainResult, missing: str, question: str) -> Reply:
         # «said» — исходные слова: когда придёт ответ, в них могут быть детали (дозировка, время)
