@@ -60,8 +60,10 @@ def build_router(access: Access, admin: Admin) -> Router:
                 if warn:
                     await message.answer(personalize(Reply(T.TOO_FAST), v.account.address).text)
                 return None
-        if message.text and len(message.text) > MAX_TEXT:
-            await message.answer(personalize(Reply(T.TOO_LONG.format(n=MAX_TEXT)), v.account.address).text)
+        skip, tell = limiter.too_long(message.from_user.id, len(message.text or ""), MAX_TEXT)
+        if skip:
+            if tell:
+                await message.answer(personalize(Reply(T.TOO_LONG.format(n=MAX_TEXT)), v.account.address).text)
             return None
         if v.kind != "owner" and access.stopped_for_all:
             return None                              # ⏹ остановлен для всех — гостям молчим

@@ -73,3 +73,16 @@ def test_logs_do_not_contain_user_words(tmp_path, caplog):
     with caplog.at_level(logging.INFO):
         run(owner.handle_text("Пароль от почты qwerty"))
     assert "qwerty" not in caplog.text
+
+
+def test_long_paste_split_by_telegram_answered_once():
+    """Живая ошибка: огромный текст пришёл 4 кусками — 3 раза «слишком длинное» и хвост ушёл к ИИ."""
+    c = Clock()
+    rl = RateLimiter(c)
+    assert rl.too_long(1, 4000, 1500) == (True, True)
+    c.t += 0.5
+    assert rl.too_long(1, 4000, 1500) == (True, False)
+    c.t += 0.5
+    assert rl.too_long(1, 900, 1500) == (True, False)        # хвостик этой же вставки
+    c.t += 30
+    assert rl.too_long(1, 50, 1500) == (False, False)        # новое обычное сообщение — как обычно
