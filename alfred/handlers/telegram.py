@@ -10,6 +10,7 @@ from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove, User
 from ..core.access import Access, Visitor
 from ..core.admin import Admin
 from ..core.reply import Reply
+from ..core.security import MAX_TEXT, RateLimiter
 from ..services import search
 from ..ui import texts as T
 from ..ui.address import MAM, SIR, asked_address, personalize
@@ -29,6 +30,7 @@ async def send_reply(bot: Bot, chat_id: int, reply: Reply, owner: bool = False,
 
 def build_router(access: Access, admin: Admin) -> Router:
     router = Router()
+    limiter = RateLimiter()
     # Только личные сообщения: в группах Альфред молчит.
     router.message.filter(F.chat.type == "private")
 
@@ -44,12 +46,22 @@ def build_router(access: Access, admin: Admin) -> Router:
     async def gate(message: Message, bot: Bot, starting: bool = False) -> Visitor | None:
         """Пускаем владельца и приглашённых. Остальным — вежливый отказ.
         При первом знакомстве сначала спрашиваем, как обращаться: «Сэр» или «Мэм»."""
-        v = visitor(message.from_user)
-        if v.kind == "stranger":
-            await message.answer(T.INVITE_ONLY, reply_markup=ReplyKeyboardRemove())
+        if message.from_user is None or message.from_user.is_bot:
             return None
-        if v.kind == "blocked":
-            await message.answer(T.BLOCKED, reply_markup=ReplyKeyboardRemove())
+        v = visitor(message.from_user)
+        if v.kind in ("stranger", "blocked"):
+            if limiter.stranger_may_get_reply(message.from_user.id):
+                await message.answer(T.INVITE_ONLY if v.kind == "stranger" else T.BLOCKED,
+                                     reply_markup=ReplyKeyboardRemove())
+            return None
+        if v.kind != "owner":
+            ok, warn = limiter.allow(message.from_user.id)
+            if not ok:
+                if warn:
+                    await message.answer(personalize(Reply(T.TOO_FAST), v.account.address).text)
+                return None
+        if message.text and len(message.text) > MAX_TEXT:
+            await message.answer(personalize(Reply(T.TOO_LONG.format(n=MAX_TEXT)), v.account.address).text)
             return None
         if v.kind != "owner" and access.stopped_for_all:
             return None                              # ⏹ остановлен для всех — гостям молчим
@@ -155,6 +167,9 @@ def build_router(access: Access, admin: Admin) -> Router:
         v = visitor(callback.from_user)
         if v.kind not in ("owner", "user", "new"):
             await callback.answer("Доступ закрыт")
+            return
+        if v.kind != "owner" and not limiter.allow(callback.from_user.id)[0]:
+            await callback.answer("Не так быстро 🙂")
             return
         owner = v.kind == "owner"
         data = callback.data or ""

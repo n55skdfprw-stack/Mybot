@@ -35,13 +35,11 @@ class Brain:
                 continue
             try:
                 result = resolve_dates(parse(raw), text, today)
-                log.info("Brain: %s target=%r due=%s new_due=%s type=%s when=%r time=%r new_time=%r "
-                         "apply=%s (pro=%s)", result.intent, result.target, result.due_date, result.new_due_date,
-                         result.event_type, result.event_when, result.time_text, result.new_time_text,
-                         result.apply_to, pro)
+                # В логах — только тип команды, без слов пользователя: логи видит владелец, а данные гостей — личные.
+                log.info("Brain: %s (pro=%s)", result.intent, pro)
                 return result
             except ParseError as exc:
-                log.warning("Brain parse error (pro=%s): %s | raw=%r", pro, exc, raw[:300])
+                log.warning("Brain parse error (pro=%s): %s | ответ ИИ: %s символов", pro, exc, len(raw or ""))
         if failures == 2:
             raise BrainUnavailable()
         return BrainResult(intent="UNKNOWN")

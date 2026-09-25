@@ -210,3 +210,10 @@ def test_rename_back_and_fact_not_dislike(tmp_path):
     assert c.important_facts == "Зануда" and not c.likes_dislikes
     say(a, llm, "Диана не любит опоздания", intent="UPDATE_PERSON", person="Диана", dossier={"dislikes": "опоздания"})
     assert a.dossier.all()[0].likes_dislikes == "- Опоздания"
+
+
+def test_rename_to_same_name(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, "У Дианы др 5 мая", intent="CREATE_BIRTHDAY", person="Диана", bday_text="5 мая")
+    r = run(a.handle_text("Поменяй Диана на Диана"))
+    assert r.text == "🎩 Сэр, человека уже так и зовут: Диана!"

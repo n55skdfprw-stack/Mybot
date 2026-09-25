@@ -169,11 +169,16 @@ class UserRepository:
         with self.db.connect() as conn:
             return [r["username"] for r in conn.execute("SELECT username FROM invites ORDER BY created_at")]
 
-    def take_invite(self, username: Optional[str]) -> bool:
+    def take_invite(self, username: Optional[str], valid_days: int = 7) -> bool:
+        """Приглашение срабатывает один раз и живёт 7 дней — чтобы старым приглашением не воспользовался
+        чужой человек, занявший это @имя позже."""
         name = clean_username(username)
         if not name:
             return False
+        from datetime import timedelta
+        cutoff = (datetime.now() - timedelta(days=valid_days)).isoformat(timespec="seconds")   # как в _now()
         with self.db.connect() as conn:
+            conn.execute("DELETE FROM invites WHERE created_at < ?", (cutoff,))
             return conn.execute("DELETE FROM invites WHERE username=?", (name,)).rowcount > 0
 
     # ------------------------------------------------------------ запросы к ИИ

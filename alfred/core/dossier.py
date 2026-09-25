@@ -7,6 +7,7 @@ from typing import Optional
 from ..brain.parser import BrainResult
 from ..database.dossier_repo import Card
 from ..database.finance_repo import Person
+from ..services import search
 from ..services.dossier import KEYS, find_phone
 from ..ui import birthday_texts as B
 from ..ui import dossier_texts as DT
@@ -98,6 +99,8 @@ class DossierMixin:
         if last and REVERT_RE.search(text.strip()):
             pid, old = last
             card = self.dossier.get(pid)
+            if card and search.normalize(card.full_name) == search.normalize(old):
+                return Reply(f"🎩 Сэр, имя и так прежнее: {old}!")
             if card:
                 was = card.full_name
                 parts = old.split(maxsplit=1)
@@ -127,6 +130,8 @@ class DossierMixin:
             if not card:
                 return None
             old = card.full_name
+            if search.normalize(old) == search.normalize(new):
+                return Reply(f"🎩 Сэр, человека уже так и зовут: {old}!")
             parts = new.split()
             changes = {"first_name": parts[0]}
             if len(parts) > 1:
