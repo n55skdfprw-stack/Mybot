@@ -21,6 +21,9 @@ RENAME_RES = [
     re.compile(rf"(?:правильно|правильное имя|его зовут|её зовут|ее зовут)\s*[:—-]?\s*{NAME_WORD}\s*$", re.I),
     re.compile(rf"имя\s+не\s+\S+,?\s+а\s+{NAME_WORD}", re.I),
 ]
+REVERT_RE = re.compile(r"^(?:поменяй|верни|измени|сделай|переименуй)?\s*(?:всё\s+|все\s+|имя\s+)?"
+                       r"(?:обратно|назад|как\s+было)[.!]*$|^отмени\s+(?:переименование|это)[.!]*$", re.I)
+LOVE_RE = re.compile(r"люб|нрав|обожа|ненавид|терпеть|бесит|раздража|фанат|в\s+восторге", re.I)
 MOVE_NOTE_RE = re.compile(r"(?:из\s+замет\w*|заметк\w*).*(?:в\s+досье)|(?:в\s+досье).*(?:из\s+замет\w*|заметк\w*)",
                           re.I)
 MOVE_LAST_RE = re.compile(r"^(?:перенеси|перемести|запиши|напиши|добавь|сохрани)\s+(?:это\s+|её\s+|ее\s+|его\s+)?"
@@ -90,7 +93,23 @@ class DossierMixin:
         return None
 
     def try_rename(self, text: str) -> Optional[Reply]:
-        """«Исправь имя на Даня», «Переименуй Дани в Даня», «Имя не Дани, а Даня»."""
+        """«Исправь имя на Даня», «Переименуй Дани в Даня», «Имя не Дани, а Даня», «Поменяй обратно»."""
+        last = self.__dict__.get("_last_rename")
+        if last and REVERT_RE.search(text.strip()):
+            pid, old = last
+            card = self.dossier.get(pid)
+            if card:
+                was = card.full_name
+                parts = old.split(maxsplit=1)
+                card, _ = self.dossier.apply(card, {"first_name": parts[0]})
+                if len(parts) > 1:
+                    card, _ = self.dossier.apply(card, {"last_name": parts[1]})
+                elif card.last_name:
+                    self.dossier.repo.set(self.user_id, card.id, {"last_name": None})
+                    card = self.dossier.get(card.id)
+                self.__dict__["_last_rename"] = (card.id, was)
+                self._set_last("person", card.id)
+                return Reply(f"🎩 Готово, Сэр! Вернул как было!\n\n👤 {was} → {card.full_name}")
         for i, rx in enumerate(RENAME_RES):
             m = rx.search(text.strip().rstrip("!."))
             if not m:
@@ -114,6 +133,7 @@ class DossierMixin:
                 changes["last_name"] = parts[1]
             card, _ = self.dossier.apply(card, changes)
             self._set_last("person", card.id)
+            self.__dict__["_last_rename"] = (card.id, old)            # для «Поменяй обратно»
             extra = []
             b = self.birthdays.of(card.id)
             if b:
@@ -159,6 +179,10 @@ class DossierMixin:
         # «Запиши номер Сергея +7 900…» — это досье, а не заметка и не дело.
         if r.intent in ("CREATE_NOTE", "CREATE_TASK", "UNKNOWN") and r.person and find_phone(text):
             return replace(r, intent="UPDATE_PERSON", dossier={"phone": find_phone(text)})
+        # «Диани зануда»: ИИ записал в «не любит», хотя про любовь ни слова — это просто факт о человеке.
+        if r.intent == "UPDATE_PERSON" and r.dossier and not r.dossier_remove \
+                and set(r.dossier) <= {"likes", "dislikes"} and not LOVE_RE.search(text):
+            return replace(r, dossier={"facts": "; ".join(v for v in r.dossier.values() if v)})
         # «Иннокентий зануда», «Вася Пупкин — должник»: о человеке из досье — пишем в досье, а не в заметки.
         if r.intent in ("CREATE_NOTE", "UNKNOWN", "UPDATE_BIRTHDAY"):
             about = self._about_known_person(text)

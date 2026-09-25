@@ -193,3 +193,20 @@ def test_move_right_after_note(tmp_path):
     llm.said(intent="UPDATE_PERSON", person="Олег Смирнов", dossier={"facts": "должник"})
     r = run(a.handle_text("Запиши это в досье"))
     assert r.text.startswith("🎩 Готово, Сэр! Перенёс заметку в досье.") and a.notes.all() == []
+
+
+def test_rename_back_and_fact_not_dislike(tmp_path):
+    """Живые ошибки: «Поменяй обратно» изменило заметку; «Диани зануда» записалось в «не любит»."""
+    a, llm = make(tmp_path)
+    say(a, llm, "Паспорт лежит в верхнем ящике", intent="CREATE_NOTE", content="Паспорт лежит в верхнем ящике")
+    say(a, llm, "У Дианы др 5 мая", intent="CREATE_BIRTHDAY", person="Диана", bday_text="5 мая")
+    run(a.handle_text("Поменяй Диана на Диани"))
+    r = run(a.handle_text("Поменяй обратно"))                     # без ИИ
+    assert r.text == "🎩 Готово, Сэр! Вернул как было!\n\n👤 Диани → Диана"
+    assert a.notes.all()[0].content == "Паспорт лежит в верхнем ящике"
+    r = say(a, llm, "Диана зануда", intent="UPDATE_PERSON", person="Диана", dossier={"dislikes": "зануда"})
+    assert "Записал: важные факты" in r.text
+    c = a.dossier.all()[0]
+    assert c.important_facts == "Зануда" and not c.likes_dislikes
+    say(a, llm, "Диана не любит опоздания", intent="UPDATE_PERSON", person="Диана", dossier={"dislikes": "опоздания"})
+    assert a.dossier.all()[0].likes_dislikes == "- Опоздания"
