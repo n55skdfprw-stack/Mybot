@@ -204,8 +204,9 @@ def build_router(access: Access, admin: Admin, backup=None) -> Router:
             access.users.set_address(v.account.id, addr)
             await send_reply(bot, message.chat.id, Reply(f"🎩 Как скажете, {addr}!"), owner=owner, address=addr)
             return
-        if owner and backup and len(message.text.split()) <= 4 and re.search(
-                r"резерв|бэкап|backup|резервн\w*\s+копи|сделай\s+копию", message.text.lower()):
+        if owner and backup and re.fullmatch(
+                r"\s*(?:альфред,?\s*)?(?:резерв|бэкап|backup|резервн\w*\s+копи\w*|проверка\s+резерва|"
+                r"(?:сделай|создай|сними)\s+(?:резервную\s+)?копию)[\s.!?]*", message.text.lower()):
             # «Резерв», «Сделай копию», «Проверка резерва» — открываем 📁 Резерв, а не гадаем через ИИ
             wants_now = re.search(r"сделай|создай|сними", message.text.lower())
             reply = await backup.callback("bk:now" if wants_now else "bk:view", message.chat.id)

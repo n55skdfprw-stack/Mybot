@@ -112,15 +112,16 @@ class BackupManager:
         if not self.channel:
             return Reply(f"🎩 Резерв, Сэр!\n\n{SETUP}", buttons=[[("↩️ Назад", "adm:sys")]], edit=edit)
         items = self.copies()
-        lines = [f"💾 {self._when(c['at'])} · {c['size'] / 1024 / 1024:.1f} МБ" for c in reversed(items)] \
-            or ["Копий пока нет"]
+        newest_first = list(reversed(list(enumerate(items))))
+        lines = [f"💾 №{n} · {self._when(c['at'])} · {c['size'] / 1024 / 1024:.1f} МБ".replace(".", ",")
+                 + (" (свежая)" if n == 1 else "")
+                 for n, (_, c) in enumerate(newest_first, 1)] or ["Копий пока нет"]
         err = self.users.setting("backup_error")
         warn = f"\n\n⚠️ Последняя попытка не удалась: {ERRORS.get(err, 'не получилось отправить в канал')}" \
             if err else ""
         rows = [[("💾 Сделать копию сейчас", "bk:now")]]
-        for i, c in reversed(list(enumerate(items))):
-            rows.append([(f"📥 Прислать · {self._when(c['at'])}", f"bk:get:{i}"),
-                         (f"♻️ Восстановить", f"bk:rest:{i}")])
+        for n, (i, c) in enumerate(newest_first, 1):
+            rows.append([(f"📥 Прислать №{n}", f"bk:get:{i}"), (f"♻️ Восстановить №{n}", f"bk:rest:{i}")])
         rows.append([("↩️ Назад", "adm:sys")])
         return Reply("🎩 Резерв, Сэр!\n\nКаждую ночь в 4:00 кладу зашифрованную копию в ваш канал и храню 2 "
                      "последние.\n\n" + "\n".join(lines) + warn, buttons=rows, edit=edit)
