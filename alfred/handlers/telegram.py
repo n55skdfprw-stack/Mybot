@@ -1,6 +1,8 @@
 """Связь Telegram ↔ ядро Альфреда. Здесь нет бизнес-логики — только доступ и отправка сообщений."""
 
 import logging
+import re
+from dataclasses import replace
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -201,6 +203,14 @@ def build_router(access: Access, admin: Admin, backup=None) -> Router:
         if addr:
             access.users.set_address(v.account.id, addr)
             await send_reply(bot, message.chat.id, Reply(f"🎩 Как скажете, {addr}!"), owner=owner, address=addr)
+            return
+        if owner and backup and len(message.text.split()) <= 4 and re.search(
+                r"резерв|бэкап|backup|резервн\w*\s+копи|сделай\s+копию", message.text.lower()):
+            # «Резерв», «Сделай копию», «Проверка резерва» — открываем 📁 Резерв, а не гадаем через ИИ
+            wants_now = re.search(r"сделай|создай|сними", message.text.lower())
+            reply = await backup.callback("bk:now" if wants_now else "bk:view", message.chat.id)
+            reply = replace(reply, edit=False)
+            await send_reply(bot, message.chat.id, reply, owner=True, address=v.account.address)
             return
         if owner:
             if message.text == T.MENU_SYSTEM:
