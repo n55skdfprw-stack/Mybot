@@ -61,6 +61,12 @@ RELATIVE_RE = re.compile(r"через\s+(\d{1,3}|полчаса|час|полт�
 REMIND_RE = re.compile(r"^\s*(?:альфред,?\s*)?напомни(?:те)?\b", re.I)
 
 
+# «Удали все встречи», «Удали все напоминания на сегодня», «Очисти распорядок на завтра»
+BULK_RE = re.compile(r"^(?:альфред,?\s*)?(?:удали|убери|очисти|отмени|сотри)\w*\s+(?:мне\s+)?(?:все|всё|весь)\s*(.*)$", re.I)
+KIND_WORDS = [("встреч", "встречи"), ("напомина", "напоминания"), ("лекци", "лекции"), ("практик", "практики"),
+              ("врач", "приёмы у врача"), ("тренир", "тренировки"), ("событ", "события"), ("распоряд", "всё")]
+
+
 class ScheduleMixin:
     schedule: ScheduleService
 
@@ -203,6 +209,77 @@ class ScheduleMixin:
         self._set_last("event", event.id)
         head = T.pick("🎩 Разумеется, Сэр! Записал в распорядок!", "🎩 Записал, Сэр!")
         return Reply(f"{head}\n\n🗓️ {S.day_title(event.date, self.today())}\n{S.block(event)}")
+
+    # ------------------------------------------------------------ удалить сразу несколько
+    def _matches_kind(self, e: Event, kind: str) -> bool:
+        if kind == "встреч":
+            return e.type == "meeting" or "встреч" in (e.title or "").lower()
+        if kind == "напомина":
+            return e.type == "reminder"
+        typemap = {"лекци": "lecture", "практик": "practice", "врач": "doctor", "тренир": "training"}
+        if kind in typemap:
+            return e.type == typemap[kind]
+        return True                                    # «все события», «весь распорядок»
+
+    def try_bulk_delete(self, text: str) -> Optional[Reply]:
+        m = BULK_RE.match(text.strip().rstrip("!."))
+        if not m:
+            return None
+        rest = m.group(1).lower()
+        kind = next(((k, label) for k, label in KIND_WORDS if k in rest), None)
+        if not kind:
+            return None                                # «удали все дела» и т. п. — не распорядок
+        k, label = kind
+        found = find_dates(rest, self.today())
+        on = found[0] if found else (self.today() if "сегодн" in rest else None)
+        pool = [e for e in self.schedule.between(self.today(), self.today() + timedelta(days=60))
+                if (on is None or e.date == on) and self._matches_kind(e, k)]
+        if not pool:
+            return Reply("🎩 Сэр, в распорядке такого нет!")
+        if all(e.recurrence_id for e in pool):
+            return None                        # «Удали все тренировки» по расписанию — там своё подтверждение
+        self._set_pending("BULK_DELETE", None, {"ids": [e.id for e in pool], "question": "удалить всё это?"})
+        lines = "\n".join(f"❌ {S.day_title(e.date, self.today())} — {e.start_time} {S.label(e)}" for e in pool[:15])
+        more = f"\n…и ещё {len(pool) - 15}" if len(pool) > 15 else ""
+        series = any(e.recurrence_id for e in pool)
+        note = "\n\nПовторяющиеся (например, тренировки по расписанию) удалятся только в эти дни." if series else ""
+        return Reply(f"🎩 Сэр, удалить из распорядка всё это? Всего: {len(pool)}\n\n{lines}{more}{note}",
+                     buttons=[[("🗑 Да, удалить", "confirm:del_bulk"), ("↩️ Нет, оставить", "confirm:no")]])
+
+    def _confirm_bulk_delete(self) -> Reply:
+        ctx = self._ctx()
+        ids = ctx.data.get("ids") if ctx.intent == "BULK_DELETE" else None
+        self._clear_pending()
+        if not ids:
+            return Reply("🎩 Сэр, эта кнопка уже неактуальна!", clear_source_buttons=True)
+        events = [e for e in (self.schedule.get(i) for i in ids) if e]
+        if events:
+            self.schedule.delete(events, self.now())
+        self._set_last("event", None)
+        return Reply(f"🎩 Готово, Сэр! Удалил из распорядка: {len(events)}!", edit=True)
+
+    def filtered_view(self, text: str) -> Optional[Reply]:
+        """«Покажи встречи», «Какие у меня напоминания?» — только нужный вид, а не весь распорядок."""
+        t = text.lower()
+        if not re.search(r"покажи|какие|что\s+у\s+меня|список", t):
+            return None
+        kind = next(((k, label) for k, label in KIND_WORDS[:5] if k in t), None)
+        if not kind:
+            return None
+        k, label = kind
+        found = find_dates(t, self.today())
+        start = found[0] if found else self.today()
+        end = found[0] if found else self.today() + timedelta(days=30)
+        pool = [e for e in self.schedule.between(start, end) if self._matches_kind(e, k)]
+        if not pool:
+            return Reply(f"🎩 Сэр, {label} в распорядке нет!", buttons=SCHEDULE_BUTTONS)
+        days, current = [], None
+        for e in pool:
+            if e.date != current:
+                current = e.date
+                days.append(f"🗓️ {S.day_title(e.date, self.today())}")
+            days[-1] += "\n" + S.block(e)
+        return Reply(f"🎩 Ваши {label}, Сэр!\n\n" + "\n\n".join(days), buttons=SCHEDULE_BUTTONS)
 
     # ------------------------------------------------------------ 🔔 «Напомни …»
     def _reminder_at(self, r: BrainResult):

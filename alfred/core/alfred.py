@@ -244,6 +244,12 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
         moved_reminder = self.try_move_reminder(text)
         if moved_reminder:
             return moved_reminder
+        bulk = self.try_bulk_delete(text)
+        if bulk:
+            return bulk
+        shown = self.filtered_view(text)
+        if shown:
+            return shown
 
         ctx = self._ctx()
         pending_question = ctx.data.get("question") if ctx.intent else None
@@ -885,6 +891,8 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
             return self.schedule_day_view(d, edit=True)
 
         if kind == "confirm":
+            if parts[1] == "del_bulk":
+                return self._confirm_bulk_delete()
             if parts[1] == "del_rules" and len(parts) == 3:
                 return self._confirm_delete_rules(parts[2])
             if parts[1] == "del_series" and len(parts) == 4:

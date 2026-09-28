@@ -701,3 +701,26 @@ def test_meeting_time_passed_today_asks_day_and_swap_with_preposition(tmp_path):
     llm.said(intent="CREATE_EVENT", event_type="meeting", event_title="Созвон", time_text="в 18", event_when="сегодня")
     r = run(a.handle_text("Созвон в 18"))
     assert r.text == "🎩 Разумеется, Сэр! На какой день назначить встречу?"
+
+
+def test_bulk_delete_and_filtered_view(tmp_path):
+    """Живая ошибка: встречи удалялись только по одной; «Покажи встречи» показывало всё подряд."""
+    a, llm, clock = make(tmp_path)
+    for title, t in (("Встреча с Дианой", "в 12"), ("Встреча с Олегом", "в 15")):
+        llm.said(intent="CREATE_EVENT", event_type="meeting", event_title=title, time_text=t, event_when="завтра")
+        run(a.handle_text(f"{title} завтра {t}"))
+    llm.said(intent="CREATE_REMINDER", title="встреча", time_text="в 18:00")
+    run(a.handle_text("Напомни в 18:00 про встречу"))
+    llm.said(intent="CREATE_EVENT", event_type="training", event_when="завтра", time_text="в 19:00")
+    run(a.handle_text("Тренировка завтра в 19:00"))
+    r = run(a.handle_text("Покажи встречи"))                  # без ИИ
+    assert r.text.startswith("🎩 Ваши встречи, Сэр!") and "Тренировка" not in r.text
+    assert r.text.count("Встреча") == 3
+    r = run(a.handle_text("Удали все встречи"))
+    assert r.text.startswith("🎩 Сэр, удалить из распорядка всё это? Всего: 3")
+    r = a.handle_callback("confirm:del_bulk")
+    assert r.text == "🎩 Готово, Сэр! Удалил из распорядка: 3!"
+    left = a.schedule.between(a.today(), a.today() + __import__("datetime").timedelta(days=5))
+    assert [e.type for e in left] == ["training"]
+    r = run(a.handle_text("Удали все напоминания"))
+    assert r.text == "🎩 Сэр, в распорядке такого нет!"
