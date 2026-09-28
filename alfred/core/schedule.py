@@ -57,6 +57,10 @@ def infer_type(*texts: Optional[str]) -> Optional[str]:
     return None
 
 
+RELATIVE_RE = re.compile(r"через\s+(\d{1,3}|полчаса|час|полтора\s+часа)\s*(минут\w*|мин\b|час\w*)?")
+REMIND_RE = re.compile(r"^\s*(?:альфред,?\s*)?напомни(?:те)?\b", re.I)
+
+
 class ScheduleMixin:
     schedule: ScheduleService
 
@@ -188,6 +192,44 @@ class ScheduleMixin:
         self._set_last("event", event.id)
         head = T.pick("🎩 Разумеется, Сэр! Записал в распорядок!", "🎩 Записал, Сэр!")
         return Reply(f"{head}\n\n🗓️ {S.day_title(event.date, self.today())}\n{S.block(event)}")
+
+    # ------------------------------------------------------------ 🔔 «Напомни …»
+    def _reminder_at(self, r: BrainResult):
+        """Когда напомнить: «через 20 минут», «в 15:00», «завтра в 9». None — время не назвали."""
+        heard = " ".join(filter(None, [r.time_text, self._message]))
+        m = RELATIVE_RE.search(heard.lower())
+        if m:
+            num, unit = m.group(1), m.group(2) or ""
+            minutes = {"полчаса": 30, "час": 60, "полтора часа": 90}.get(num)
+            if minutes is None:
+                minutes = int(num) * (60 if unit.startswith("час") else 1)
+            return self.now().replace(second=0, microsecond=0) + timedelta(minutes=minutes)
+        start = parse_time_range(r.time_text)[0] or parse_time_range(self._message)[0]
+        if not start:
+            return None
+        hh, mm = map(int, start.split(":"))
+        d = self._event_date(r)
+        if not d:
+            d = self.today()
+            if (hh, mm) <= (self.now().hour, self.now().minute):
+                d += timedelta(days=1)                # «в 9», а уже 10 — значит, завтра в 9
+        return datetime(d.year, d.month, d.day, hh, mm, tzinfo=self.now().tzinfo)
+
+    def _create_reminder(self, r: BrainResult) -> Reply:
+        what = (r.title or r.event_title or r.content or "").strip()
+        if not what:
+            return self._ask(r, "title", "🎩 Разумеется, Сэр! О чём напомнить?")
+        at = self._reminder_at(r)
+        if not at:
+            return self._ask(r, "time_text", "🎩 Разумеется, Сэр! Во сколько напомнить?")
+        values = {"type": "reminder", "title": what[:1].upper() + what[1:], "start_time": f"{at:%H:%M}",
+                  "end_time": None, "comment": None, "location": None, "discipline": None, "focus": None,
+                  "date": at.date().isoformat()}
+        event = self.schedule.create(values, self.now(), force=True)
+        self._set_last("event", event.id)
+        shift = (event.date - self.today()).days
+        day = "сегодня" if shift == 0 else "завтра" if shift == 1 else f"{event.date.day} {T.MONTHS_GEN[event.date.month - 1]}"
+        return Reply(f"🎩 Разумеется, Сэр! Напомню!\n\n🔔 {event.title} — {day} в {event.start_time}")
 
     # ------------------------------------------------------------ поиск существующего
     def _resolve_events(self, r: BrainResult) -> list[Event]:
@@ -409,7 +451,13 @@ class ScheduleMixin:
             lines += ["", *extra]
         return "\n".join(lines)
 
-    def collect_reminders(self) -> list[tuple[int, Optional[Reply]]]:
+    def morning_due(self) -> bool:
+        """Пора ли прямо сейчас слать раннюю утреннюю сводку (тогда заранее узнаём погоду)."""
+        now = self.now().replace(tzinfo=None)
+        due = self.schedule.notifs.pending_until(self.user_id, now.strftime("%Y-%m-%dT%H:%M"))
+        return any(n.type == "morning_lecture" for n in due)
+
+    def collect_reminders(self, weather: Optional[str] = None) -> list[tuple[int, Optional[Reply]]]:
         """Уведомления, которые пора отправить. Сильно опоздавшие не отправляются (бот был выключен)."""
         now = self.now().replace(tzinfo=None)
         due = self.schedule.notifs.pending_until(self.user_id, now.strftime("%Y-%m-%dT%H:%M"))
@@ -420,8 +468,15 @@ class ScheduleMixin:
             if now - scheduled > timedelta(minutes=5) or not e:
                 result.append((n.id, None))
                 continue
+            if n.type == "reminder":
+                result.append((n.id, Reply(f"🎩 Сэр, позвольте напомнить!\n\n🔔 {S.label(e)}"
+                                           + (f"\n{chr(10).join(S.details(e))}" if S.details(e) else ""))))
+                continue
             text = self._reminder_text(e, scheduled)
             buttons = None
+            if n.type == "morning_lecture" and weather:
+                head, _, rest = text.partition("\n\n")
+                text = f"{head}\n\n{weather}\n\n{rest}"
             if n.type == "morning_lecture":
                 tasks = self.tasks.relevant(self.today())
                 if tasks:

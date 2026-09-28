@@ -14,3 +14,10 @@ class Reply:
     clear_source_buttons: bool = False  # убрать кнопки у исходного сообщения, а ответ прислать новым
     toast: Optional[str] = None         # короткое всплывающее уведомление при нажатии кнопки
     extra: list = field(default_factory=list)  # дополнительные сообщения после основного
+    protect: bool = False               # запретить пересылку и сохранение (медкарта, досье)
+
+
+@dataclass
+class ProtectedReply(Reply):
+    """Ответ с личными сведениями: Telegram не даст его переслать или сохранить."""
+    protect: bool = True

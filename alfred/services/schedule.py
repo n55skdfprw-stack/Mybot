@@ -11,11 +11,11 @@ from .tasks import DuplicateError, VerificationError
 
 HORIZON_DAYS = 84          # повторения без даты окончания разворачиваются на 12 недель вперёд
 SEARCH_DAYS = 120          # поиск события для изменения — в пределах 4 месяцев
-MORNING_LIMIT = time(10, 0)
+MORNING_LIMIT = time(8, 0)   # утренняя сводка — в 8:00; если первое дело раньше 9:00 — за час до него
 
 STUDY_TYPES = {"lecture", "practice"}   # напоминание: первое за день — за час, остальные — за 30 минут
 NO_REMINDER = {"training"}             # о тренировках отдельно не напоминаем
-EVENT_TYPES = {"lecture", "practice", "training", "doctor", "meeting", "other"}
+EVENT_TYPES = {"lecture", "practice", "training", "doctor", "meeting", "other", "reminder"}
 
 
 def event_dt(e: Event) -> datetime:
@@ -207,14 +207,25 @@ class ScheduleService:
         for d in days:
             events = self.day(d)
             self.notifs.cancel_pending_for_events(self.user_id, [e.id for e in events])
+            # Первое дело дня (кроме «напомни в …»): если напоминание о нём раньше 8:00 —
+            # оно и становится утренней сводкой (погода + дела), чтобы не будить человека дважды.
+            timed = sorted((e for e in events if e.type != "reminder"), key=event_dt)
+            first = timed[0] if timed else None
+            first_at = event_dt(first) - timedelta(minutes=60) if first else None
+            morning_id = first.id if first and first_at.time() <= MORNING_LIMIT else None
             study = sorted((e for e in events if e.type in STUDY_TYPES), key=event_dt)
             for idx, e in enumerate(study):
                 at = event_dt(e) - timedelta(minutes=60 if idx == 0 else 30)
-                ntype = "morning_lecture" if idx == 0 and at.time() <= MORNING_LIMIT else "lecture"
+                ntype = "morning_lecture" if e.id == morning_id else "lecture"
                 self._schedule(e, ntype, at, now_str)
             for e in events:
-                if e.type not in STUDY_TYPES and e.type not in NO_REMINDER:
-                    self._schedule(e, "event", event_dt(e) - timedelta(minutes=60), now_str)
+                if e.type == "reminder":
+                    self._schedule(e, "reminder", event_dt(e), now_str)       # ровно в назначенное время
+                elif e.type not in STUDY_TYPES:
+                    if e.id == morning_id:
+                        self._schedule(e, "morning_lecture", event_dt(e) - timedelta(minutes=60), now_str)
+                    elif e.type not in NO_REMINDER:
+                        self._schedule(e, "event", event_dt(e) - timedelta(minutes=60), now_str)
 
     def _schedule(self, e: Event, ntype: str, at: datetime, now_str: str) -> None:
         at_str = at.strftime("%Y-%m-%dT%H:%M")
@@ -222,5 +233,5 @@ class ScheduleService:
             self.notifs.add(self.user_id, e.id, ntype, at_str)
 
     def morning_merged(self, d: date) -> bool:
-        """Есть ли сегодня утреннее напоминание о лекции, которое заменяет сводку в 10:00."""
+        """Есть ли сегодня раннее напоминание о первом деле, которое заменяет сводку в 8:00."""
         return any(not n.cancelled for n in self.notifs.for_day(self.user_id, d, "morning_lecture"))

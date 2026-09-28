@@ -12,7 +12,7 @@ from ..services.dossier import KEYS, find_phone
 from ..ui import birthday_texts as B
 from ..ui import dossier_texts as DT
 from ..ui import finance_texts as F
-from .reply import Reply
+from .reply import ProtectedReply as Reply
 
 NAME_WORD = r"([А-ЯЁA-Zа-яёa-z][а-яёa-z\-]+(?:\s+[А-ЯЁA-Z][а-яёa-z\-]+)?)"
 RENAME_RES = [

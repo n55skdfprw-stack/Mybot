@@ -86,3 +86,32 @@ def test_long_paste_split_by_telegram_answered_once():
     assert rl.too_long(1, 900, 1500) == (True, False)        # хвостик этой же вставки
     c.t += 30
     assert rl.too_long(1, 50, 1500) == (False, False)        # новое обычное сообщение — как обычно
+
+
+def test_notes_not_sent_to_ai_for_unrelated_messages(tmp_path):
+    access, admin, llm = make(tmp_path)
+    a = access.alfred_for(access.owner)
+    llm.said(intent="CREATE_NOTE", content="Пароль от почты qwerty")
+    run(a.handle_text("Запиши: пароль от почты qwerty"))
+    a._set_last("task", None)
+    sent = []
+    orig = llm.complete
+
+    async def spy(system, user, pro=False):
+        sent.append(user)
+        return await orig(system, user, pro)
+    llm.complete = spy
+    llm.said(intent="CREATE_TASK", title="Купить хлеб")
+    run(a.handle_text("Завтра купить хлеб"))
+    assert "qwerty" not in sent[-1]
+    llm.said(intent="DELETE_NOTE", target="пароль")
+    run(a.handle_text("Удали заметку про пароль"))
+    assert "qwerty" in sent[-1]                       # про заметки — ИИ видит их начала, как и раньше
+
+
+def test_medcard_and_dossier_replies_are_protected(tmp_path):
+    access, admin, llm = make(tmp_path)
+    a = access.alfred_for(access.owner)
+    assert run(a.handle_text("🩺 Медкарта")).protect
+    assert run(a.handle_text("🗂️ Досье")).protect
+    assert not run(a.handle_text("📋 Ваши дела")).protect

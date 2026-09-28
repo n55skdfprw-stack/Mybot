@@ -32,6 +32,8 @@ from .birthdays import BirthdayMixin
 from .dossier import DossierMixin
 from .weather import WEATHER_INTENTS, WeatherMixin
 
+NOTES_HINT_RE = re.compile(r"замет|запис|удали|убери|измени|поменяй|исправ|замени|допиш|добав|перепиш|найди|"
+                           r"покажи|где\s|что\s+я|сотри|вычеркни|обнови")
 HELP_RE = re.compile(r"^(?:/help|помощь|справка)$|что\s+ты\s+(?:умеешь|можешь)|что\s+умеешь|твои\s+(?:функции|возможности)|"
                      r"как\s+(?:тобой|с\s+тобой)\s+пользоваться|что\s+ты\s+за\s+бот|расскажи\s+о\s+себе")
 from .med import MED_INTENTS, MedMixin
@@ -43,7 +45,7 @@ from ..database.dossier_repo import DossierRepository
 from ..services.dossier import DossierService
 from ..database.birthday_repo import BirthdayRepository
 from ..services.birthdays import BirthdayService
-from .schedule import SCHEDULE_BUTTONS, ScheduleMixin, infer_type
+from .schedule import REMIND_RE, SCHEDULE_BUTTONS, ScheduleMixin, infer_type
 
 log = logging.getLogger(__name__)
 
@@ -248,7 +250,7 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
                 last_object=self._last_description(ctx),
                 pending=pending_question,
                 task_titles=[t.title for t in self.tasks.active()],
-                note_titles=[T.short(n.content, 120) for n in self.notes.all()],
+                note_titles=self._notes_for_ai(text, ctx),
             )
         except BrainUnavailable:
             return Reply(T.AI_UNAVAILABLE)
@@ -261,7 +263,7 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
                 result = await self.brain.analyze(
                     text=text, today=self.today(), last_object=self._last_description(ctx), pending=None,
                     task_titles=[t.title for t in self.tasks.active()],
-                    note_titles=[T.short(n.content, 120) for n in self.notes.all()])
+                    note_titles=self._notes_for_ai(text, ctx))
             except BrainUnavailable:
                 return Reply(T.AI_UNAVAILABLE)
 
@@ -272,6 +274,10 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
         result = self._guard_birthday(result, text)
         result = self._guard_dossier(result, text)
         result = self._guard_med(result, text)
+        # «Напомни …» — это напоминание в точное время, а не дело и не заметка
+        if REMIND_RE.search(text) and result.intent in ("CREATE_TASK", "CREATE_EVENT", "CREATE_NOTE", "UNKNOWN"):
+            result = replace(result, intent="CREATE_REMINDER",
+                             title=result.title or result.event_title or result.content)
         if result.intent in WEATHER_INTENTS:
             return await self._weather_intent(result)
         await self._prefetch_rates(result)
@@ -371,6 +377,7 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
             "DELETE_PERSON": self._delete_person,
             "SHOW_PERSON": self._show_person,
             "SEARCH_PEOPLE": self._search_people,
+            "CREATE_REMINDER": self._create_reminder,
             "MED_CASE": self._med_case,
             "MED_DRUG": self._med_drug,
             "MED_RECOVER": self._med_recover,
@@ -385,6 +392,15 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
         }
         handler = handlers.get(r.intent)
         return handler(r) if handler else Reply(T.NOT_UNDERSTOOD)
+
+    def _notes_for_ai(self, text: str, ctx) -> list[str]:
+        """Начала заметок отправляем ИИ, только когда сообщение может быть про заметки.
+        Иначе ИИ незачем знать, что у человека записано (меньше личного уходит наружу)."""
+        about_notes = NOTES_HINT_RE.search(search.normalize(text)) or ctx.entity_type == "note" \
+            or (ctx.intent or "").endswith("NOTE")
+        if not about_notes:
+            return []
+        return [T.short(n.content, 80) for n in self.notes.all()]
 
     def _fits_question(self, missing: Optional[str], text: str) -> bool:
         """Похож ли ответ на то, что спрашивали: для даты — есть дата, для суммы — есть число."""
@@ -646,10 +662,10 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
     def check_message(self, period: str, weather: Optional[str] = None) -> Optional[Reply]:
         today = self.today()
         relevant = self.tasks.relevant(today)
-        if period == "morning" and weather and (not relevant or self.schedule.morning_merged(today)):
-            # дел нет (или список уже пришёл с напоминанием о лекции) — присылаем только погоду
-            head = "Погода на сегодня" if self.schedule.morning_merged(today) else T.day_greeting(self.now())
-            return Reply(f"🎩 {head}, Сэр!\n\n{weather}")
+        if period == "morning" and self.schedule.morning_merged(today):
+            return None  # утренняя сводка с погодой уже пришла за час до первого дела
+        if period == "morning" and weather and not relevant:
+            return Reply(f"🎩 {T.day_greeting(self.now())}, Сэр!\n\n{weather}")  # дел нет — только погода
         if not relevant:
             return None  # нечего напоминать — не беспокоим
         open_lines = "\n".join(T.task_line(t, today) for t in relevant)

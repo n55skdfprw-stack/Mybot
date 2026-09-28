@@ -23,9 +23,10 @@ async def send_reply(bot: Bot, chat_id: int, reply: Reply, owner: bool = False,
                      address: str | None = None) -> None:
     reply = personalize(reply, address)
     markup = inline(reply.buttons) or main_menu(owner)
-    await bot.send_message(chat_id, reply.text, reply_markup=markup)
+    await bot.send_message(chat_id, reply.text, reply_markup=markup, protect_content=reply.protect)
     for extra in reply.extra:
-        await bot.send_message(chat_id, extra.text, reply_markup=inline(extra.buttons) or main_menu(owner))
+        await bot.send_message(chat_id, extra.text, reply_markup=inline(extra.buttons) or main_menu(owner),
+                               protect_content=extra.protect)
 
 
 def build_router(access: Access, admin: Admin) -> Router:
@@ -124,6 +125,30 @@ def build_router(access: Access, admin: Admin) -> Router:
         await send_reply(bot, message.chat.id, Reply(T.PAUSED, buttons=[[("▶️ Продолжить", "pause:off")]]),
                          owner=v.kind == "owner", address=v.account.address)
 
+    @router.message(Command("privacy"))
+    async def on_privacy(message: Message, bot: Bot):
+        v = await gate(message, bot)
+        if v:
+            await send_reply(bot, message.chat.id, Reply(T.PRIVACY), owner=v.kind == "owner",
+                             address=v.account.address)
+
+    @router.message(Command("deleteme"))
+    async def on_delete_me(message: Message, bot: Bot):
+        await ask_delete_me(message, bot)
+
+    async def ask_delete_me(message: Message, bot: Bot):
+        v = await gate(message, bot)
+        if not v:
+            return
+        if v.kind == "owner":
+            await send_reply(bot, message.chat.id, Reply("🎩 Сэр, вы хозяин Альфреда — ваш аккаунт удалить нельзя. "
+                                                         "Чтобы стереть записи, есть «🧹 Чистый лист»."),
+                             owner=True, address=v.account.address)
+            return
+        await send_reply(bot, message.chat.id, Reply(T.DELETE_ME_ASK, buttons=[
+            [("🗑 Да, удалить аккаунт", "me:delete")], [("↩️ Нет, оставить", "me:keep")]]),
+                         address=v.account.address)
+
     @router.message(Command("reset", "clean"))
     async def on_reset(message: Message, bot: Bot):
         v = await gate(message, bot)
@@ -138,6 +163,12 @@ def build_router(access: Access, admin: Admin) -> Router:
         if not v:
             return
         owner = v.kind == "owner"
+        if is_word(message.text, T.PRIVACY_WORDS):
+            await send_reply(bot, message.chat.id, Reply(T.PRIVACY), owner=owner, address=v.account.address)
+            return
+        if is_word(message.text, T.DELETE_ME_WORDS):
+            await ask_delete_me(message, bot)
+            return
         addr = asked_address(message.text)
         if addr:
             access.users.set_address(v.account.id, addr)
@@ -190,6 +221,25 @@ def build_router(access: Access, admin: Admin) -> Router:
             return
         if data == "pause:off":
             await callback.answer("Альфред и так работает")
+            return
+        if data in ("me:delete", "me:keep") and not owner:
+            await callback.answer()
+            msg = callback.message
+            if data == "me:keep":
+                if msg:
+                    await msg.edit_text(personalize(Reply("🎩 Как скажете, Сэр! Всё остаётся на месте."),
+                                                    v.account.address).text)
+                return
+            label = v.account.label
+            access.db.delete_user(v.account.id)
+            access.forget(v.account.id)
+            if msg:
+                await msg.edit_text(personalize(Reply(T.DELETE_ME_DONE), v.account.address).text)
+            try:
+                await bot.send_message(access.owner_tg, personalize(
+                    Reply(f"🎩 Сэр, {label} удалил свой аккаунт у Альфреда."), access.owner.address).text)
+            except Exception:
+                log.exception("Не удалось уведомить владельца")
             return
         if data in ("addr:sir", "addr:mam"):
             addr = SIR if data == "addr:sir" else MAM

@@ -251,3 +251,4 @@ def test_maintenance_toggle_and_guests(tmp_path):
     assert [g.id for g in access.guests_to_notify()] == [acc.id]
     access.users.set_paused(acc.id, True)
     assert access.guests_to_notify() == []                    # на паузе — не беспокоим
+

@@ -6,13 +6,16 @@ from ..database.schedule_repo import Event
 from .texts import MONTHS_GEN
 
 TYPE_LABEL = {"lecture": "Лекция", "practice": "Практика", "training": "Тренировка",
-              "doctor": "Врач", "meeting": "Встреча", "other": "Событие"}
+              "doctor": "Врач", "meeting": "Встреча", "other": "Событие", "reminder": "Напоминание"}
 TYPE_NOM = {"lecture": "лекция", "practice": "практика", "training": "тренировка",
-            "doctor": "приём у врача", "meeting": "встреча", "other": "событие"}
+            "doctor": "приём у врача", "meeting": "встреча", "other": "событие",
+            "reminder": "напоминание"}
 TYPE_ACC = {"lecture": "лекцию", "practice": "практику", "training": "тренировку",
-            "doctor": "приём у врача", "meeting": "встречу", "other": "событие"}
+            "doctor": "приём у врача", "meeting": "встречу", "other": "событие",
+            "reminder": "напоминание"}
 TYPE_PLURAL = {"lecture": "лекции", "practice": "практики", "training": "тренировки",
-               "doctor": "приёмы у врача", "meeting": "встречи", "other": "события"}
+               "doctor": "приёмы у врача", "meeting": "встречи", "other": "события",
+               "reminder": "напоминания"}
 
 WEEKDAY_CAP = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
 WEEKDAY_DAT_PL = ["понедельникам", "вторникам", "средам", "четвергам", "пятницам", "субботам", "воскресеньям"]

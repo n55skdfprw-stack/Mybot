@@ -127,24 +127,26 @@ def test_lecture_reminders_first_hour_second_half(tmp_path):
              location="Аудитория 205")
     run(a.handle_text("x")); run(a.handle_text("y"))
     kinds = sorted((n.type, n.scheduled_at) for n in pending(a))
-    assert kinds == [("lecture", "2026-09-24T14:30"), ("morning_lecture", "2026-09-24T09:00")]
+    # первое дело в 10:00 — напоминание в 9:00 (позже утренней сводки в 8:00), второе — за 30 минут
+    assert kinds == [("lecture", "2026-09-24T09:00"), ("lecture", "2026-09-24T14:30")]
 
 
 def test_morning_merged_with_lecture_and_tasks(tmp_path):
     a, llm, clock = make(tmp_path)
     llm.said(intent="CREATE_TASK", title="Купить корм коту")
     run(a.handle_text("Купить корм коту"))
-    llm.said(intent="CREATE_EVENT", event_type="lecture", event_when="завтра", time_text="с 10 до 12",
+    llm.said(intent="CREATE_EVENT", event_type="lecture", event_when="завтра", time_text="с 8:30 до 10",
              location="Аудитория 304")
     run(a.handle_text("x"))
-    clock.set(2026, 9, 24, 9, 0)
-    [(nid, reply)] = a.collect_reminders()
-    assert reply.text.startswith("🎩 Доброе утро, Сэр!")
-    assert "Через час, в 10:00, у вас начинается лекция!" in reply.text
+    clock.set(2026, 9, 24, 7, 30)
+    assert a.morning_due()
+    [(nid, reply)] = a.collect_reminders(weather="☁️ Погода: Санкт-Петербург\nСейчас +12°")
+    assert reply.text.startswith("🎩 Доброе утро, Сэр!\n\n☁️ Погода: Санкт-Петербург\nСейчас +12°\n\n"
+                                 "Через час, в 08:30, у вас начинается лекция!")
     assert "🚪 Аудитория 304" in reply.text and "⭕ Купить корм коту" in reply.text
     a.mark_reminder(nid, sent=True)
-    clock.set(2026, 9, 24, 10, 0)
-    assert a.check_message("morning") is None  # вторую сводку в 10:00 не шлём
+    clock.set(2026, 9, 24, 8, 0)
+    assert a.check_message("morning", weather="погода") is None  # вторую сводку в 8:00 не шлём
 
 
 def test_missed_reminder_not_sent_and_summary_restored(tmp_path):
@@ -582,3 +584,48 @@ def test_delete_all_trainings_robust_to_ai(tmp_path, ai):
     assert "не нашёл" not in r.text and r.text.endswith("?")
     a.handle_callback(r.buttons[0][0][1])
     assert a.schedule.between(TODAY, date(2027, 12, 31)) == []
+
+
+# ---------------------------------------------------------------- 8.14: «Напомни …», утро в 8:00
+
+def test_remind_at_exact_time(tmp_path):
+    a, llm, clock = make(tmp_path)                     # сейчас 23 сентября, 11:00
+    llm.said(intent="CREATE_REMINDER", title="позвонить маме", time_text="в 15:00")
+    r = run(a.handle_text("Напомни в 15:00 позвонить маме"))
+    style_ok(r.text)
+    assert r.text == "🎩 Разумеется, Сэр! Напомню!\n\n🔔 Позвонить маме — сегодня в 15:00"
+    clock.set(2026, 9, 23, 15, 0)
+    [(nid, reply)] = a.collect_reminders()
+    assert reply.text == "🎩 Сэр, позвольте напомнить!\n\n🔔 Позвонить маме"
+
+
+def test_remind_asks_time(tmp_path):
+    a, llm, clock = make(tmp_path)
+    llm.said(intent="CREATE_REMINDER", title="встреча")
+    r = run(a.handle_text("Напомни про встречу"))
+    assert r.text == "🎩 Разумеется, Сэр! Во сколько напомнить?"
+    llm.said(intent="UNKNOWN")                         # ИИ ошибся — короткий ответ со временем всё равно ответ
+    r = run(a.handle_text("в 18:30"))
+    assert r.text == "🎩 Разумеется, Сэр! Напомню!\n\n🔔 Встреча — сегодня в 18:30"
+
+
+def test_remind_relative_and_past_time_is_tomorrow(tmp_path):
+    a, llm, clock = make(tmp_path)
+    llm.said(intent="CREATE_TASK", title="выключить плиту")     # ИИ записал делом — это напоминание
+    r = run(a.handle_text("Напомни через 20 минут выключить плиту"))
+    assert r.text == "🎩 Разумеется, Сэр! Напомню!\n\n🔔 Выключить плиту — сегодня в 11:20"
+    assert a.tasks.active() == []
+    llm.said(intent="CREATE_REMINDER", title="выпить воды", time_text="в 9")
+    r = run(a.handle_text("Напомни в 9 выпить воды"))
+    assert "🔔 Выпить воды — завтра в 09:00" in r.text
+
+
+def test_morning_at_8_or_hour_before_first_event(tmp_path):
+    a, llm, clock = make(tmp_path)
+    llm.said(intent="CREATE_EVENT", event_type="meeting", event_when="завтра", time_text="в 7:30",
+             event_title="Встреча с тренером")
+    run(a.handle_text("x"))
+    kinds = [(n.type, n.scheduled_at) for n in pending(a)]
+    assert kinds == [("morning_lecture", "2026-09-24T06:30")]
+    clock.set(2026, 9, 24, 8, 0)
+    assert a.check_message("morning", weather="погода") is None

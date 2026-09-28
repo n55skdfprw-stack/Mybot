@@ -48,7 +48,7 @@ TOPUP_RE = re.compile(r"\bпополн\w*", re.IGNORECASE)
 INCOME_RE = re.compile(r"\b(зп|з/п|зарплат\w*|аванс\w*|преми\w*|стипенди\w*|пенси\w*|кэшбэк\w*|кешбэк\w*|"
                        r"получил\w*|пришл\w*|пришёл|пришел|заработал\w*|вернули|возврат\w*|доход\w*)\b", re.IGNORECASE)
 # На эти вопросы Альфреда короткий ответ — это всегда ответ, а не новая команда.
-SHORT_ANSWER_PARAMS = {"category", "person", "amount_text", "new_amount_text", "bday_text", "query"}
+SHORT_ANSWER_PARAMS = {"category", "person", "amount_text", "new_amount_text", "bday_text", "query", "time_text"}
 
 
 def _day_short(d: date) -> str:
@@ -132,6 +132,10 @@ class FinanceMixin:
             return r
         if ctx.missing_parameter in ("amount_text", "new_amount_text") and not parse_amount(text):
             return r
+        if ctx.missing_parameter == "time_text":
+            from ..brain.dates import parse_time_range
+            if not (parse_time_range(text)[0] or re.search(r"через\s+\S+", text.lower())):
+                return r
         if ctx.missing_parameter == "bday_text":
             from ..services.birthdays import parse_birthday
             if not parse_birthday(text, self.today()):

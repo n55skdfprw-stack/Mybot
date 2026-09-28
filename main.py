@@ -50,7 +50,9 @@ async def main() -> None:
                                BotCommand(command="help", description="❓ Что умеет Альфред"),
                                BotCommand(command="pause", description="⏸ Пауза — Альфред замолчит"),
                                BotCommand(command="resume", description="▶️ Продолжить"),
-                               BotCommand(command="clean", description="🧹 Чистый лист — удалить всё")])
+                               BotCommand(command="clean", description="🧹 Чистый лист — удалить всё"),
+                               BotCommand(command="privacy", description="🔒 Как хранятся мои данные"),
+                               BotCommand(command="deleteme", description="🗑 Удалить мой аккаунт")])
     try:
         await bot.set_my_short_description("🎩 Альфред — ваш онлайн дворецкий: дела, финансы, медкарта, погода.")
         await bot.set_my_description("🎩 Добрый день! Я Альфред — ваш онлайн дворецкий.\n\n"

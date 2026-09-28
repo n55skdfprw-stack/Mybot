@@ -11,7 +11,7 @@ from ..services import search
 from ..services.dossier import find_phone
 from ..services.med import MedService, build_drug
 from ..ui import med_texts as M
-from .reply import Reply
+from .reply import ProtectedReply as Reply
 
 MED_INTENTS = {"MED_CASE", "MED_DRUG", "MED_RECOVER", "MED_SHOW", "MED_DELETE", "MED_ALLERGY", "MED_CONTACT"}
 RECOVER_RE = re.compile(r"\b(выздоровел\w*|поправил\w*|вылечил\w*)\b")

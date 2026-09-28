@@ -1,6 +1,7 @@
 """Плановые задачи Альфреда.
 
-- 10:00, 14:00, 18:00 — проверки дел (утром — вместе с погодой и советами) (утренняя пропускается, если сводка пришла с напоминанием о лекции);
+- 8:00, 14:00, 18:00 — проверки дел (утром — вместе с погодой и советами);
+  если первое дело раньше 9:00 — утренняя сводка приходит за час до него (утренняя пропускается, если сводка пришла с напоминанием о лекции);
 - каждую минуту — напоминания о событиях распорядка;
 - каждую минуту — напоминания о приёме лекарств (медкарта);
 - 12:00 — дни рождения (сегодня, завтра и через неделю — одним сообщением);
@@ -22,7 +23,7 @@ from ..handlers.telegram import send_reply
 
 log = logging.getLogger(__name__)
 
-CHECKS = {"morning": 10, "day": 14, "evening": 18}
+CHECKS = {"morning": 8, "day": 14, "evening": 18}
 
 
 def build_scheduler(bot: Bot, access: Access) -> AsyncIOScheduler:
@@ -50,7 +51,8 @@ def build_scheduler(bot: Bot, access: Access) -> AsyncIOScheduler:
 
     async def run_reminders():
         async def job(acc, alfred):
-            for notif_id, reply in alfred.collect_reminders():
+            weather = await alfred.morning_weather() if alfred.morning_due() else None
+            for notif_id, reply in alfred.collect_reminders(weather=weather):
                 if reply is None:
                     alfred.mark_reminder(notif_id, sent=False)
                     continue
