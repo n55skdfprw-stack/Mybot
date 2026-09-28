@@ -674,10 +674,30 @@ def test_swap_word_in_last_event(tmp_path):
     a, llm, clock = make(tmp_path)
     llm.said(intent="CREATE_EVENT", event_type="meeting", event_title="Встреча с Диани", time_text="в 12",
              event_when="сегодня")
-    run(a.handle_text("Встреча с Диани в 12"))
+    run(a.handle_text("Встреча с Диани сегодня в 12"))
     r = run(a.handle_text("Поменяй не Диани а Диана"))             # без ИИ
     assert r.text.startswith("🎩 Готово, Сэр! Исправил!") and "12:00 — Встреча с Диана" in r.text
     llm.said(intent="CREATE_TASK", title="Купить молоко")
     run(a.handle_text("Купить молоко"))
     r = run(a.handle_text("Не молоко, а кефир"))
     assert "⭕ Купить кефир" in r.text
+
+
+def test_meeting_time_passed_today_asks_day_and_swap_with_preposition(tmp_path):
+    """Живые ошибки: в 14:14 «Встреча с Диани в 12» записалась на сегодня (в прошлое);
+    «Поменяй не с Диани а Диана» — «что именно изменить?»."""
+    a, llm, clock = make(tmp_path)
+    clock.set(2026, 9, 28, 14, 14)
+    llm.said(intent="CREATE_EVENT", event_type="meeting", event_title="Встреча с Диани", time_text="в 12",
+             event_when="сегодня")                      # ИИ сам придумал «сегодня»
+    r = run(a.handle_text("Встреча с Диани в 12"))
+    assert r.text == "🎩 Разумеется, Сэр! Сегодня 12:00 уже прошло — на какой день назначить встречу?"
+    llm.said(intent="ANSWER", answer="завтра")
+    r = run(a.handle_text("завтра"))
+    assert "Завтра" in r.text and "12:00 — Встреча с Диани" in r.text
+    r = run(a.handle_text("Поменяй не с Диани а Диана"))
+    assert "12:00 — Встреча с Диана" in r.text
+    # день не назван — спрашиваем, даже если ИИ «придумал» сегодня
+    llm.said(intent="CREATE_EVENT", event_type="meeting", event_title="Созвон", time_text="в 18", event_when="сегодня")
+    r = run(a.handle_text("Созвон в 18"))
+    assert r.text == "🎩 Разумеется, Сэр! На какой день назначить встречу?"

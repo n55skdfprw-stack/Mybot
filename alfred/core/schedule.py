@@ -180,8 +180,19 @@ class ScheduleMixin:
                              f"\n\n🔁 {desc}, {until}\n{body}")
 
         d = self._event_date(r)
+        said_day = bool(find_dates(self._message or "", self.today())) or bool(
+            r.event_when and re.search(r"сегодн|завтр|послезавтр|понедельн|вторн|сред|четверг|пятниц|суббот|"
+                                       r"воскресень|январ|феврал|март|апрел|ма[йя]|июн|июл|август|сентябр|"
+                                       r"октябр|ноябр|декабр|через|недел", (self._message or "").lower()))
+        now = self.now()
+        if d is not None and not said_day and "сегодн" in (r.event_when or "").lower():
+            d = None        # день не называли, ИИ сам подставил «сегодня» — спросим день, как договаривались
         if not d:
-            return self._ask(r, "event_when", f"🎩 Разумеется, Сэр! На какой день назначить {S.TYPE_ACC[etype]}?")
+            question = f"🎩 Разумеется, Сэр! На какой день назначить {S.TYPE_ACC[etype]}?"
+            if not said_day and start <= f"{now:%H:%M}":
+                question = (f"🎩 Разумеется, Сэр! Сегодня {start} уже прошло — на какой день назначить "
+                            f"{S.TYPE_ACC[etype]}?")
+            return self._ask(replace(r, event_when=None, time_text=r.time_text or start), "event_when", question)
         values["date"] = d.isoformat()
         try:
             event = self.schedule.create(values, self.now(), force=r.force_duplicate)

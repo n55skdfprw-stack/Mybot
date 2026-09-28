@@ -32,7 +32,8 @@ from .birthdays import BirthdayMixin
 from .dossier import DossierMixin
 from .weather import WEATHER_INTENTS, WeatherMixin
 
-SWAP_RE = re.compile(r"^(?:поменяй|исправь|замени|измени)?[\s,]*(?:не\s+)([^\s,]+)[\s,]+а\s+([^\s,.!]+)[.!]*$", re.I)
+SWAP_RE = re.compile(r"^(?:поменяй|исправь|замени|измени)?[\s,]*не\s+(.{1,40}?)[\s,]+а\s+(.{1,40}?)[.!]*$", re.I)
+PREPS = ("с", "со", "у", "к", "ко", "в", "во", "на", "для", "про", "о", "об", "от", "до", "за")
 NOTES_HINT_RE = re.compile(r"замет|запис|удали|убери|измени|поменяй|исправ|замени|допиш|добав|перепиш|найди|"
                            r"покажи|где\s|что\s+я|сотри|вычеркни|обнови")
 HELP_RE = re.compile(r"^(?:/help|помощь|справка)$|что\s+ты\s+(?:умеешь|можешь)|что\s+умеешь|твои\s+(?:функции|возможности)|"
@@ -412,7 +413,16 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
         m = SWAP_RE.match(text.strip())
         if not m or re.search(r"\d", m.group(1) + m.group(2)):
             return None                                      # «не 700, а 800» — это исправление суммы
-        old, new = m.group(1), m.group(2)
+        old, new = m.group(1).strip(), m.group(2).strip()
+        # «не с Диани, а Диана» — предлог оставляем: меняем «Диани» на «Диана»
+        ow, nw = old.split(), new.split()
+        if ow and ow[0].lower() in PREPS:
+            ow = ow[1:]
+        if nw and nw[0].lower() in PREPS:
+            nw = nw[1:]
+        if not ow or not nw:
+            return None
+        old, new = " ".join(ow), " ".join(nw)
         ctx = self._ctx()
         if ctx.intent or not ctx.entity_id:
             return None
@@ -420,8 +430,11 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
         def swap(s: Optional[str]) -> Optional[str]:
             if not s:
                 return None
-            stem = re.escape(old.lower()[:max(3, len(old) - 1)])
-            out, n = re.subn(rf"\b{stem}\w*", new, s, flags=re.I)
+            words = old.split()
+            *head, last = words
+            stem = re.escape(last.lower()[:max(3, len(last) - 1)])
+            pattern = r"\b" + "".join(re.escape(w) + r"\s+" for w in head) + stem + r"\w*"
+            out, n = re.subn(pattern, new, s, flags=re.I)
             return out if n else None
 
         if ctx.entity_type == "event":
