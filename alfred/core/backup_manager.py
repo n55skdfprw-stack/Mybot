@@ -121,7 +121,8 @@ class BackupManager:
             if err else ""
         rows = [[("💾 Сделать копию сейчас", "bk:now")]]
         for n, (i, c) in enumerate(newest_first, 1):
-            rows.append([(f"📥 Прислать №{n}", f"bk:get:{i}"), (f"♻️ Восстановить №{n}", f"bk:rest:{i}")])
+            # номер — в начале: на узком экране Telegram обрезает конец надписи, а не начало
+            rows.append([(f"№{n} · 📥 Прислать", f"bk:get:{i}"), (f"№{n} · ♻️ Восстановить", f"bk:rest:{i}")])
         rows.append([("↩️ Назад", "adm:sys")])
         return Reply("🎩 Резерв, Сэр!\n\nКаждую ночь в 4:00 кладу зашифрованную копию в ваш канал и храню 2 "
                      "последние.\n\n" + "\n".join(lines) + warn, buttons=rows, edit=edit)
