@@ -199,7 +199,8 @@ class Admin:
         guests_used = sum(self.users.usage(a.id, today) for a in accounts if a.role != "owner")
         guests = [a for a in accounts if a.role != "owner"]
         text = (f"🎩 Система, Сэр!\n\n🎩 Альфред — версия {VERSION}\n⏱ Работает без перерыва: {hours} ч {minutes} мин\n"
-                f"🤖 ИИ (GigaChat): {ok(ai)}\n💱 Курсы ЦБ: {ok(rates)}\n🌤 Погода: {ok(wx)}\n💾 База: {db}\n\n"
+                f"🤖 ИИ (GigaChat): {ok(ai)}\n💱 Курсы ЦБ: {ok(rates)}\n🌤 Погода: {ok(wx)}\n💾 База: {db}\n"
+                f"🔐 Шифрование базы: {'включено' if self.access.db.cipher.on else 'выключено (нет DATA_KEY)'}\n\n"
                 f"👥 Пользователей: {len(guests)} · приглашений: {len(self.users.invites())}\n"
                 f"📊 Сообщений ИИ сегодня: вы — {owner_used}, гости — {guests_used}\n"
                 f"🔢 Лимит для гостей по умолчанию: {self.access.default_limit} в день")

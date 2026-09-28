@@ -64,7 +64,8 @@ class DossierRepository:
         with self.db.connect() as conn:
             rows = conn.execute("SELECT * FROM people WHERE user_id=? AND dossier_hidden=0 "
                                 "ORDER BY first_name, last_name", (user_id,)).fetchall()
-        return [_card(r) for r in rows]
+        cards = [_card(r) for r in rows]
+        return sorted(cards, key=lambda c: (c.first_name.lower(), (c.last_name or "").lower()))  # имена зашифрованы
 
     def mark_explicit(self, user_id: int, person_id: int) -> None:
         with self.db.connect() as conn:

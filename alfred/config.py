@@ -19,6 +19,7 @@ class Config:
     database_path: str
     timezone: ZoneInfo
     default_city: str
+    data_key: str = ""          # ключ шифрования базы (DATA_KEY); пусто — шифрование выключено
 
 
 def _default_db_path() -> str:
@@ -50,4 +51,18 @@ def load_config() -> Config:
         database_path=os.getenv("DATABASE_PATH", "").strip() or _default_db_path(),
         timezone=ZoneInfo(os.getenv("DEFAULT_TIMEZONE", "Europe/Moscow").strip()),
         default_city=os.getenv("DEFAULT_CITY", "Санкт-Петербург").strip(),
+        data_key=_data_key(),
     )
+
+
+def _data_key() -> str:
+    key = os.getenv("DATA_KEY", "").strip()
+    if not key:
+        return ""
+    try:
+        from cryptography.fernet import Fernet
+        Fernet(key.encode())
+    except Exception:
+        raise RuntimeError("DATA_KEY задан неправильно: это должна быть строка из 44 символов, "
+                           "которую выдал Альфред (см. логи при запуске без ключа)")
+    return key

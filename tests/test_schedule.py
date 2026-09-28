@@ -667,3 +667,17 @@ def test_where_is_note_when_ai_unsure(tmp_path):
     llm.said(intent="UNKNOWN")
     r = run(a.handle_text("Где код домофона"))
     assert "1234" in r.text
+
+
+def test_swap_word_in_last_event(tmp_path):
+    """Живая ошибка: «Встреча с Диани в 12» → «Поменяй не Диани а Диана» → «что именно изменить?»."""
+    a, llm, clock = make(tmp_path)
+    llm.said(intent="CREATE_EVENT", event_type="meeting", event_title="Встреча с Диани", time_text="в 12",
+             event_when="сегодня")
+    run(a.handle_text("Встреча с Диани в 12"))
+    r = run(a.handle_text("Поменяй не Диани а Диана"))             # без ИИ
+    assert r.text.startswith("🎩 Готово, Сэр! Исправил!") and "12:00 — Встреча с Диана" in r.text
+    llm.said(intent="CREATE_TASK", title="Купить молоко")
+    run(a.handle_text("Купить молоко"))
+    r = run(a.handle_text("Не молоко, а кефир"))
+    assert "⭕ Купить кефир" in r.text

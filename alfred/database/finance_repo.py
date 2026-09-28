@@ -118,7 +118,8 @@ class PeopleRepository:
         with self.db.connect() as conn:
             rows = conn.execute("SELECT id, first_name, last_name FROM people WHERE user_id=? ORDER BY first_name",
                                 (user_id,)).fetchall()
-        return [Person(r["id"], r["first_name"], r["last_name"]) for r in rows]
+        people = [Person(r["id"], r["first_name"], r["last_name"]) for r in rows]
+        return sorted(people, key=lambda p: (p.first_name or "").lower())   # имена могут быть зашифрованы
 
     def get(self, user_id: int, person_id: int) -> Optional[Person]:
         with self.db.connect() as conn:

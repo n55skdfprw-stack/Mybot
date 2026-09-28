@@ -25,8 +25,16 @@ log = logging.getLogger("alfred")
 async def main() -> None:
     config = load_config()
 
-    db = Database(config.database_path)
+    db = Database(config.database_path, key=config.data_key)
     db.migrate()
+    if db.cipher.on:
+        n = db.encrypt_existing()
+        log.info("🔐 Шифрование базы включено%s", f" (зашифровал старых записей: {n})" if n else "")
+    else:
+        from alfred.database.crypto import new_key
+        log.warning("🔓 Шифрование базы ВЫКЛЮЧЕНО. Чтобы включить, добавьте в Railway переменную DATA_KEY "
+                    "со значением: %s  — и сохраните этот ключ в надёжном месте: без него записи не прочитать.",
+                    new_key())
 
     llm = GigaChatClient(config.gigachat_key, config.gigachat_model, config.gigachat_model_pro)
     if await llm.check():

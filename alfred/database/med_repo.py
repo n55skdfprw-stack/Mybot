@@ -187,7 +187,8 @@ class MedRepository:
     def contacts(self, user_id: int) -> list[Contact]:
         with self.db.connect() as conn:
             rows = conn.execute("SELECT * FROM med_contacts WHERE user_id=? ORDER BY name", (user_id,)).fetchall()
-        return [Contact(r["id"], r["name"], r["specialty"], r["phone"], r["place"]) for r in rows]
+        contacts = [Contact(r["id"], r["name"], r["specialty"], r["phone"], r["place"]) for r in rows]
+        return sorted(contacts, key=lambda c: c.name.lower())                # имена могут быть зашифрованы
 
     def add_contact(self, user_id: int, c: dict) -> int:
         with self.db.connect() as conn:

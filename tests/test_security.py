@@ -115,3 +115,46 @@ def test_medcard_and_dossier_replies_are_protected(tmp_path):
     assert run(a.handle_text("🩺 Медкарта")).protect
     assert run(a.handle_text("🗂️ Досье")).protect
     assert not run(a.handle_text("📋 Ваши дела")).protect
+
+
+# ---------------------------------------------------------------- 8.16: шифрование базы
+
+def test_database_file_has_no_plain_text(tmp_path):
+    import sqlite3
+    from alfred.database.crypto import new_key
+    from alfred.database.db import Database
+    from alfred.brain.brain import Brain
+    from alfred.core.access import Access
+    from .test_alfred import TZ, FakeLLM
+    key = new_key()
+    db = Database(str(tmp_path / "e.db"), key=key)
+    db.migrate()
+    llm = FakeLLM()
+    access = Access(db, Brain(llm), 1000, TZ, "Санкт-Петербург")
+    a = access.alfred_for(access.setup_owner())
+    llm.said(intent="CREATE_NOTE", content="Пароль от почты qwerty")
+    run(a.handle_text("Запиши пароль от почты qwerty"))
+    llm.said(intent="MED_CASE", med={"illness": "Ангина", "drugs": [{"name": "Амоксициллин"}]})
+    run(a.handle_text("Заболел ангиной, амоксициллин"))
+    raw = open(tmp_path / "e.db", "rb").read()
+    assert b"qwerty" not in raw and "Амоксициллин".encode() not in raw
+    assert a.notes.all()[0].content == "Пароль от почты qwerty"        # Альфред читает как обычно
+    # без ключа — ничего не прочитать
+    bare = sqlite3.connect(tmp_path / "e.db").execute("SELECT content FROM notes").fetchone()[0]
+    assert bare.startswith("enc1:") and "qwerty" not in bare
+
+
+@__import__("pytest").mark.skipif(__import__("os").getenv("ALFRED_TEST_ENCRYPT") == "1",
+                                  reason="здесь нужна база без шифрования")
+def test_old_plain_records_get_encrypted(tmp_path):
+    from alfred.database.crypto import new_key
+    from alfred.database.db import Database
+    from alfred.database.repositories import NoteRepository, UserRepository
+    plain = Database(str(tmp_path / "p.db"))
+    plain.migrate()
+    uid = UserRepository(plain).ensure(1, "Europe/Moscow", "СПб")
+    NoteRepository(plain).add(uid, "Старая", "Старая заметка")
+    enc = Database(str(tmp_path / "p.db"), key=new_key())
+    assert enc.encrypt_existing() >= 1
+    assert b"\xd0\xa1\xd1\x82\xd0\xb0\xd1\x80\xd0\xb0\xd1\x8f" not in open(tmp_path / "p.db", "rb").read()  # «Старая»
+    assert NoteRepository(enc).all(uid)[0].content == "Старая заметка"

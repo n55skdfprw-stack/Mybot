@@ -3,8 +3,9 @@
 import logging
 import os
 import sqlite3
+from .crypto import PREFIX, SENSITIVE, Cipher, SecureConnection, SecureRow
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Optional, Iterator
 
 log = logging.getLogger(__name__)
 
@@ -251,16 +252,44 @@ CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 
 
 class Database:
-    def __init__(self, path: str):
+    def __init__(self, path: str, key: Optional[str] = None):
         self.path = path
         folder = os.path.dirname(os.path.abspath(path))
         os.makedirs(folder, exist_ok=True)
+        self.cipher = Cipher(key)
+        cipher = self.cipher
+
+        class _Conn(SecureConnection):
+            pass
+        _Conn.cipher = cipher
+
+        class _Row(SecureRow):
+            pass
+        _Row.cipher = cipher
+        self._factory, self._row = _Conn, _Row
+
+    def encrypt_existing(self) -> int:
+        """Один раз при запуске с ключом: шифруем то, что было записано до включения шифрования."""
+        if not self.cipher.on:
+            return 0
+        done = 0
+        with self.connect() as conn:
+            for table, cols in SENSITIVE.items():
+                for col in cols:
+                    rows = sqlite3.Connection.execute(
+                        conn, f"SELECT rowid, {col} FROM {table} WHERE {col} IS NOT NULL AND {col} != '' "
+                              f"AND substr({col}, 1, {len(PREFIX)}) != ?", (PREFIX,)).fetchall()
+                    for rowid, value in ((r[0], sqlite3.Row.__getitem__(r, 1)) for r in rows):
+                        sqlite3.Connection.execute(conn, f"UPDATE {table} SET {col}=? WHERE rowid=?",
+                                                   (self.cipher.enc(value), rowid))
+                        done += 1
+        return done
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
         """Соединение-транзакция: всё внутри либо сохраняется целиком, либо откатывается."""
-        conn = sqlite3.connect(self.path, timeout=10)
-        conn.row_factory = sqlite3.Row
+        conn = sqlite3.connect(self.path, timeout=10, factory=self._factory)
+        conn.row_factory = self._row
         conn.execute("PRAGMA foreign_keys = ON")
         try:
             yield conn

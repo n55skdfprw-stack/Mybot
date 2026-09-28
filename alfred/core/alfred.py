@@ -32,6 +32,7 @@ from .birthdays import BirthdayMixin
 from .dossier import DossierMixin
 from .weather import WEATHER_INTENTS, WeatherMixin
 
+SWAP_RE = re.compile(r"^(?:поменяй|исправь|замени|измени)?[\s,]*(?:не\s+)([^\s,]+)[\s,]+а\s+([^\s,.!]+)[.!]*$", re.I)
 NOTES_HINT_RE = re.compile(r"замет|запис|удали|убери|измени|поменяй|исправ|замени|допиш|добав|перепиш|найди|"
                            r"покажи|где\s|что\s+я|сотри|вычеркни|обнови")
 HELP_RE = re.compile(r"^(?:/help|помощь|справка)$|что\s+ты\s+(?:умеешь|можешь)|что\s+умеешь|твои\s+(?:функции|возможности)|"
@@ -230,6 +231,9 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
         renamed = self.try_rename(text)
         if renamed:
             return renamed
+        swapped = self.try_swap_word(text)
+        if swapped:
+            return swapped
         moved = await self.try_move_note(text)
         if moved:
             return moved
@@ -402,6 +406,45 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
         }
         handler = handlers.get(r.intent)
         return handler(r) if handler else Reply(T.NOT_UNDERSTOOD)
+
+    def try_swap_word(self, text: str) -> Optional[Reply]:
+        """«Поменяй не Диани, а Диана» — меняем слово в том, что записали последним (событие, дело, заметка)."""
+        m = SWAP_RE.match(text.strip())
+        if not m or re.search(r"\d", m.group(1) + m.group(2)):
+            return None                                      # «не 700, а 800» — это исправление суммы
+        old, new = m.group(1), m.group(2)
+        ctx = self._ctx()
+        if ctx.intent or not ctx.entity_id:
+            return None
+
+        def swap(s: Optional[str]) -> Optional[str]:
+            if not s:
+                return None
+            stem = re.escape(old.lower()[:max(3, len(old) - 1)])
+            out, n = re.subn(rf"\b{stem}\w*", new, s, flags=re.I)
+            return out if n else None
+
+        if ctx.entity_type == "event":
+            e = self.schedule.get(ctx.entity_id)
+            title = swap(e.title) if e else None
+            if title:
+                e = self.schedule.update(e, {"title": title}, self.now())
+                return Reply(f"🎩 Готово, Сэр! Исправил!\n\n🗓️ {S.day_title(e.date, self.today())}\n{S.block(e)}")
+        if ctx.entity_type == "task":
+            t = self.tasks.get(ctx.entity_id)
+            title = swap(t.title) if t else None
+            if title:
+                t = self.tasks.update(t, title, None, False)
+                return Reply(f"🎩 Готово, Сэр! Исправил!\n\n{T.task_line(t, self.today())}")
+        if ctx.entity_type == "note":
+            n = self.notes.get(ctx.entity_id)
+            content = swap(n.content) if n else None
+            if content:
+                n = self.notes.set_content(n, content)
+                return Reply(f"🎩 Готово, Сэр! Исправил!\n\n📝 {n.content}")
+        if ctx.entity_type in ("person", "birthday", "debt"):
+            return self.try_rename(f"Переименуй {old} в {new}")   # это имя человека
+        return None
 
     def _notes_for_ai(self, text: str, ctx) -> list[str]:
         """Начала заметок отправляем ИИ, только когда сообщение может быть про заметки.
