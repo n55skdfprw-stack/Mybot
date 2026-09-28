@@ -12,6 +12,7 @@ from alfred.brain.llm_client import GigaChatClient
 from alfred.config import load_config
 from alfred.core.access import Access
 from alfred.core.admin import Admin
+from alfred.core.backup_manager import BackupManager
 from alfred.database.db import Database
 from alfred.handlers.telegram import build_dispatcher
 from alfred.notifications.scheduler import build_scheduler
@@ -68,9 +69,10 @@ async def main() -> None:
                                      "подскажу погоду и напомню о важном.\n\nНажмите кнопку ниже, чтобы начать.")
     except Exception:
         log.exception("Не удалось обновить описание бота")
-    dp = build_dispatcher(access, Admin(access, llm))
+    backup = BackupManager(bot, access)
+    dp = build_dispatcher(access, Admin(access, llm, backup), backup)
 
-    scheduler = build_scheduler(bot, access)
+    scheduler = build_scheduler(bot, access, backup)
     scheduler.start()
 
     log.info("Альфред запущен (версия %s). База: %s", VERSION, config.database_path)

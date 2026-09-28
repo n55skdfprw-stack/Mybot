@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 CHECKS = {"morning": 8, "day": 14, "evening": 18}
 
 
-def build_scheduler(bot: Bot, access: Access) -> AsyncIOScheduler:
+def build_scheduler(bot: Bot, access: Access, backup=None) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=access.tz)
     common = {"misfire_grace_time": 300, "coalesce": True, "replace_existing": True}
 
@@ -83,6 +83,16 @@ def build_scheduler(bot: Bot, access: Access) -> AsyncIOScheduler:
             alfred.extend_schedule()
         await each("extend", job)
 
+    async def run_backup():
+        if not backup or not backup.channel:
+            return
+        err = await backup.run()
+        if err:
+            try:        # о проблеме с копией владельцу стоит знать
+                await bot.send_message(access.owner_tg, f"🎩 Сэр, ночная резервная копия не удалась!\n\n⚠️ {err}")
+            except Exception:
+                log.exception("Не удалось сообщить о сбое копии")
+
     for period, hour in CHECKS.items():
         scheduler.add_job(run_check, "cron", hour=hour, minute=0, args=[period], id=f"check_{period}", **common)
     scheduler.add_job(run_reminders, "interval", seconds=60, id="reminders", **common)
@@ -90,4 +100,5 @@ def build_scheduler(bot: Bot, access: Access) -> AsyncIOScheduler:
     scheduler.add_job(run_birthdays, "cron", hour=12, minute=0, id="birthdays", **common)
     scheduler.add_job(run_tomorrow, "cron", hour=19, minute=0, id="tomorrow", **common)
     scheduler.add_job(run_extend, "cron", hour=3, minute=0, id="extend", **common)
+    scheduler.add_job(run_backup, "cron", hour=4, minute=0, id="backup", **common)
     return scheduler

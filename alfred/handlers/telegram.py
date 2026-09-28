@@ -29,7 +29,7 @@ async def send_reply(bot: Bot, chat_id: int, reply: Reply, owner: bool = False,
                                protect_content=extra.protect)
 
 
-def build_router(access: Access, admin: Admin) -> Router:
+def build_router(access: Access, admin: Admin, backup=None) -> Router:
     router = Router()
     limiter = RateLimiter()
     # Только личные сообщения: в группах Альфред молчит.
@@ -157,6 +157,34 @@ def build_router(access: Access, admin: Admin) -> Router:
         reply = access.alfred_for(v.account).reset_request()
         await message.answer(reply.text, reply_markup=inline(reply.buttons))
 
+    @router.message(F.forward_origin)
+    async def on_forward(message: Message, bot: Bot):
+        """Владелец переслал сообщение из канала — подключаем канал для резервных копий."""
+        v = await gate(message, bot)
+        if not v:
+            return
+        origin = message.forward_origin
+        if v.kind == "owner" and backup and getattr(origin, "type", "") == "channel":
+            reply = await backup.connect(origin.chat.id)
+            await send_reply(bot, message.chat.id, reply, owner=True, address=v.account.address)
+            return
+        if message.text:
+            await on_text(message, bot)
+
+    @router.message(F.document)
+    async def on_document(message: Message, bot: Bot):
+        """Владелец прислал файл копии — предлагаем восстановить базу из него."""
+        v = await gate(message, bot)
+        if not v:
+            return
+        name = message.document.file_name or "копия"
+        if v.kind == "owner" and backup and name.endswith(".bin"):
+            reply = await backup.ask_restore_upload(message.document.file_id, name)
+            await send_reply(bot, message.chat.id, reply, owner=True, address=v.account.address)
+            return
+        await send_reply(bot, message.chat.id, Reply("🎩 Сэр, пока я понимаю только текст!"),
+                         owner=v.kind == "owner", address=v.account.address)
+
     @router.message(F.text)
     async def on_text(message: Message, bot: Bot):
         v = await gate(message, bot)
@@ -253,6 +281,22 @@ def build_router(access: Access, admin: Admin) -> Router:
             intro = T.INTRO.format(addr=addr) + ("" if owner else T.INTRO_LIMIT.format(limit=access.limit_of(v.account)))
             await bot.send_message(callback.from_user.id, intro, reply_markup=main_menu(owner))
             return
+        if data.startswith("bk:"):
+            if not owner or not backup:
+                await callback.answer("Доступ закрыт")
+                return
+            await callback.answer("Минутку…" if data in ("bk:now", "bk:yes") or data.startswith("bk:rest") else None)
+            reply = personalize(await backup.callback(data, callback.from_user.id), v.account.address)
+            try:
+                if reply.edit and callback.message:
+                    await callback.message.edit_text(reply.text, reply_markup=inline(reply.buttons))
+                    return
+            except TelegramBadRequest:
+                pass
+            if reply.toast:
+                return
+            await send_reply(bot, callback.from_user.id, reply, owner=True, address=v.account.address)
+            return
         if data.startswith("adm:"):
             if not owner:
                 await callback.answer("Доступ закрыт")
@@ -288,7 +332,7 @@ def build_router(access: Access, admin: Admin) -> Router:
     return router
 
 
-def build_dispatcher(access: Access, admin: Admin) -> Dispatcher:
+def build_dispatcher(access: Access, admin: Admin, backup=None) -> Dispatcher:
     dp = Dispatcher()
-    dp.include_router(build_router(access, admin))
+    dp.include_router(build_router(access, admin, backup))
     return dp

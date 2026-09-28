@@ -23,10 +23,11 @@ LIMIT_RE = re.compile(rf"(?:лимит\w*\s+(?:для\s+)?{NAME}\D+(\d{{1,4}})|{
 
 
 class Admin:
-    def __init__(self, access: Access, llm=None):
+    def __init__(self, access: Access, llm=None, backup=None):
         self.access = access
         self.users = access.users
         self.llm = llm
+        self.backup = backup                       # BackupManager (подключается в main)
 
     # ------------------------------------------------------------ помощники
     def _now(self) -> datetime:
@@ -200,7 +201,8 @@ class Admin:
         guests = [a for a in accounts if a.role != "owner"]
         text = (f"🎩 Система, Сэр!\n\n🎩 Альфред — версия {VERSION}\n⏱ Работает без перерыва: {hours} ч {minutes} мин\n"
                 f"🤖 ИИ (GigaChat): {ok(ai)}\n💱 Курсы ЦБ: {ok(rates)}\n🌤 Погода: {ok(wx)}\n💾 База: {db}\n"
-                f"🔐 Шифрование базы: {'включено' if self.access.db.cipher.on else 'выключено (нет DATA_KEY)'}\n\n"
+                f"🔐 Шифрование базы: {'включено' if self.access.db.cipher.on else 'выключено (нет DATA_KEY)'}\n"
+                + (self.backup.status_line() + "\n" if self.backup else "") + "\n"
                 f"👥 Пользователей: {len(guests)} · приглашений: {len(self.users.invites())}\n"
                 f"📊 Сообщений ИИ сегодня: вы — {owner_used}, гости — {guests_used}\n"
                 f"🔢 Лимит для гостей по умолчанию: {self.access.default_limit} в день")
@@ -212,8 +214,10 @@ class Admin:
             stop = [("⏹ Остановить для всех", "adm:stopall")]
         bell = "🔔 Предупреждать гостей о техработах: вкл" if self.access.notify_maintenance \
             else "🔕 Предупреждать гостей о техработах: выкл"
-        return Reply(text, buttons=[[("🔄 Обновить", "adm:sys"), ("👥 Пользователи", "adm:users")], stop,
-                                    [(bell, "adm:notif")]], edit=edit)
+        rows = [[("🔄 Обновить", "adm:sys"), ("👥 Пользователи", "adm:users")], stop, [(bell, "adm:notif")]]
+        if self.backup:
+            rows.append([("📁 Резерв", "bk:view")])
+        return Reply(text, buttons=rows, edit=edit)
 
     # ------------------------------------------------------------ кнопки
     async def callback(self, data: str) -> Reply:
