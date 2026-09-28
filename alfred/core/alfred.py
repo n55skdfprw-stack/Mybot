@@ -236,6 +236,9 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
         rate = await self.try_quick_rate(text)
         if rate:
             return rate
+        moved_reminder = self.try_move_reminder(text)
+        if moved_reminder:
+            return moved_reminder
 
         ctx = self._ctx()
         pending_question = ctx.data.get("question") if ctx.intent else None
@@ -266,6 +269,13 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
                     note_titles=self._notes_for_ai(text, ctx))
             except BrainUnavailable:
                 return Reply(T.AI_UNAVAILABLE)
+
+        if result.intent == "UNKNOWN":
+            q = re.sub(r"^(где|какой|какая|какое|какие|что|напомни|скажи|покажи)\b|\b(у меня|мой|моя|мое|моё)\b|[?!.]",
+                       " ", search.normalize(text))
+            q = " ".join(q.split())
+            if q and self.notes.find(q):
+                result = replace(result, intent="SEARCH_NOTE", query=q)
 
         result = self._guard_restore(result, text)
         result = self._guard_event_vs_note(result, text)

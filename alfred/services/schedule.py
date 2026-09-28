@@ -206,7 +206,7 @@ class ScheduleService:
         now_str = now.strftime("%Y-%m-%dT%H:%M")
         for d in days:
             events = self.day(d)
-            self.notifs.cancel_pending_for_events(self.user_id, [e.id for e in events])
+            self.notifs.cancel_pending_for_events(self.user_id, [e.id for e in events], after=now_str)
             # Первое дело дня (кроме «напомни в …»): если напоминание о нём раньше 8:00 —
             # оно и становится утренней сводкой (погода + дела), чтобы не будить человека дважды.
             timed = sorted((e for e in events if e.type != "reminder"), key=event_dt)

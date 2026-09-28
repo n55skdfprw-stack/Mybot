@@ -616,8 +616,11 @@ def test_remind_relative_and_past_time_is_tomorrow(tmp_path):
     assert r.text == "🎩 Разумеется, Сэр! Напомню!\n\n🔔 Выключить плиту — сегодня в 11:20"
     assert a.tasks.active() == []
     llm.said(intent="CREATE_REMINDER", title="выпить воды", time_text="в 9")
-    r = run(a.handle_text("Напомни в 9 выпить воды"))
-    assert "🔔 Выпить воды — завтра в 09:00" in r.text
+    r = run(a.handle_text("Напомни в 9 выпить воды"))      # сейчас 11:00 — ближайшее «9» это 21:00
+    assert "🔔 Выпить воды — сегодня в 21:00" in r.text
+    llm.said(intent="CREATE_REMINDER", title="зарядка", time_text="завтра в 9", event_when="завтра")
+    r = run(a.handle_text("Напомни завтра в 9 про зарядку"))
+    assert "🔔 Зарядка — завтра в 09:00" in r.text
 
 
 def test_morning_at_8_or_hour_before_first_event(tmp_path):
@@ -629,3 +632,38 @@ def test_morning_at_8_or_hour_before_first_event(tmp_path):
     assert kinds == [("morning_lecture", "2026-09-24T06:30")]
     clock.set(2026, 9, 24, 8, 0)
     assert a.check_message("morning", weather="погода") is None
+
+
+def test_live_night_reminders(tmp_path):
+    """Живые ошибки ночью: «3:31» стало 15:31; «Нет, в 03:33» не перенесло; напоминание пропало
+    из-за пересчёта дня; «Удали напоминание про встречу» не нашло."""
+    a, llm, clock = make(tmp_path)
+    clock.set(2026, 9, 28, 3, 30)
+    llm.said(intent="CREATE_REMINDER", title="попить воды", time_text="через 2 минуты")
+    run(a.handle_text("Напомни через 2 минуты попить воды"))
+    llm.said(intent="CREATE_REMINDER", title="встреча")
+    run(a.handle_text("Напомни про встречу"))
+    llm.said(intent="ANSWER", answer="3:31")
+    r = run(a.handle_text("3:31"))
+    assert "🔔 Встреча — сегодня в 03:31" in r.text
+    r = run(a.handle_text("Нет в 03:33"))                          # без ИИ
+    assert r.text == "🎩 Готово, Сэр! Перенёс напоминание!\n\n🔔 Встреча — сегодня в 03:33"
+    # в 03:32 создаём ещё одно — пересчёт дня не должен «съесть» напоминание про воду
+    clock.set(2026, 9, 28, 3, 32)
+    llm.said(intent="CREATE_REMINDER", title="выпить витамины", time_text="в 9")
+    run(a.handle_text("Напомни в 9 выпить витамины"))
+    texts = [rep.text for _, rep in a.collect_reminders() if rep]
+    assert "🎩 Сэр, позвольте напомнить!\n\n🔔 Попить воды" in texts
+    llm.said(intent="DELETE_EVENT", target="напоминание про встречу")
+    r = run(a.handle_text("Удали напоминание про встречу"))
+    assert "Встреча" in r.text and "не нашёл" not in r.text
+    assert [e.title for e in a.schedule.day(a.today()) if e.type == "reminder"] == ["Попить воды", "Выпить витамины"]
+
+
+def test_where_is_note_when_ai_unsure(tmp_path):
+    a, llm, clock = make(tmp_path)
+    llm.said(intent="CREATE_NOTE", content="Код домофона 1234")
+    run(a.handle_text("Запиши Код домофона 1234"))
+    llm.said(intent="UNKNOWN")
+    r = run(a.handle_text("Где код домофона"))
+    assert "1234" in r.text

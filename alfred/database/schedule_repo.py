@@ -181,13 +181,17 @@ class NotificationRepository:
             )
             return cur.lastrowid
 
-    def cancel_pending_for_events(self, user_id: int, event_ids: list[int]) -> None:
+    def cancel_pending_for_events(self, user_id: int, event_ids: list[int], after: Optional[str] = None) -> None:
+        """after — отменять только те, что ещё впереди (позже этого времени). Нужно, чтобы пересчёт дня
+        не терял напоминание, время которого уже наступило, но отправить его ещё не успели."""
         if not event_ids:
             return
+        extra = " AND scheduled_at > ?" if after else ""
         with self.db.connect() as conn:
             conn.executemany(
-                "UPDATE notifications SET cancelled=1 WHERE user_id=? AND event_id=? AND sent=0 AND cancelled=0",
-                [(user_id, e) for e in event_ids],
+                "UPDATE notifications SET cancelled=1 WHERE user_id=? AND event_id=? AND sent=0 AND cancelled=0"
+                + extra,
+                [(user_id, e, after) if after else (user_id, e) for e in event_ids],
             )
 
     def pending_until(self, user_id: int, until: str) -> list[Notification]:

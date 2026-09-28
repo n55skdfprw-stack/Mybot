@@ -26,7 +26,7 @@ UNTIL_RE = re.compile(
     re.IGNORECASE,
 )
 REPEAT_WORDS = re.compile(r"кажд|\bпо\s+\w+(ам|ям)\b|будн|выходн|ежедн|еженед|ежемес", re.IGNORECASE)
-TYPE_WORDS = [("training", r"тренир"), ("lecture", r"лекци"), ("practice", r"практик|семинар|\bпар[аыу]\b"),
+TYPE_WORDS = [("reminder", r"напомина"), ("training", r"тренир"), ("lecture", r"лекци"), ("practice", r"практик|семинар|\bпар[аыу]\b"),
               ("doctor", r"врач|стоматолог|терапевт|при[её]м|клиник|анализ"), ("meeting", r"встреч")]
 SCHEDULE_BUTTONS = [[("🗓️ Сегодня", "sched:today"), ("🗓️ Завтра", "sched:tomorrow")],
                     [("🗓️ На этой неделе", "sched:week"), ("🗓️ В этом месяце", "sched:month")]]
@@ -208,12 +208,47 @@ class ScheduleMixin:
         if not start:
             return None
         hh, mm = map(int, start.split(":"))
+        said = f"{r.time_text or ''} {self._message or ''}".lower()
+        m = re.search(r"\b(\d{1,2})(?:[:.](\d{2}))?\b", r.time_text or "") or \
+            re.search(r"\b(\d{1,2})[:.](\d{2})\b|\bв\s+(\d{1,2})\b", self._message or "")
+        options = [(hh, mm)]
+        if m and not re.search(r"утра|дня|вечера|ночи", said):
+            raw_h = int(next(g for g in m.groups() if g is not None))
+            raw_m = mm
+            if raw_h < 12:
+                options = [(raw_h, raw_m), (raw_h + 12, raw_m)]    # «3:31» — ближайшее: 03:31 или 15:31
         d = self._event_date(r)
-        if not d:
-            d = self.today()
-            if (hh, mm) <= (self.now().hour, self.now().minute):
-                d += timedelta(days=1)                # «в 9», а уже 10 — значит, завтра в 9
-        return datetime(d.year, d.month, d.day, hh, mm, tzinfo=self.now().tzinfo)
+        now = self.now()
+        if d and d != self.today():
+            return datetime(d.year, d.month, d.day, hh, mm, tzinfo=now.tzinfo)   # «завтра в 9» — как понял разбор
+        for oh, om in options:                     # сегодня: ближайшее время, которое ещё не прошло
+            if (oh, om) > (now.hour, now.minute):
+                return datetime(now.year, now.month, now.day, oh, om, tzinfo=now.tzinfo)
+        d = self.today() + timedelta(days=1)                  # «в 9», а уже 10 — значит, завтра в 9
+        oh, om = options[0]
+        return datetime(d.year, d.month, d.day, oh, om, tzinfo=now.tzinfo)
+
+    def try_move_reminder(self, text: str) -> Optional[Reply]:
+        """«Нет, в 03:33», «Лучше в 16», «Перенеси на 18:00» сразу после напоминания — меняем его время."""
+        ctx = self._ctx()
+        if ctx.intent or ctx.entity_type != "event" or not ctx.entity_id:
+            return None                                  # Альфред сейчас ждёт ответа на вопрос — это ответ
+        e = self.schedule.get(ctx.entity_id)
+        t = text.strip().lower()
+        if not e or e.type != "reminder" or not re.search(r"\d", t):
+            return None
+        if not re.match(r"^(нет|не\b|лучше|давай|перенеси|передвинь|измени|поменяй|исправь|а\s|в\s|на\s|через\s|\d)", t):
+            return None
+        fake = BrainResult(intent="CREATE_REMINDER", time_text=text)
+        self._message = text
+        at = self._reminder_at(fake)
+        if not at:
+            return None
+        moved = self.schedule.update(e, {"date": at.date().isoformat(), "start_time": f"{at:%H:%M}"}, self.now())
+        self._set_last("event", moved.id)
+        shift = (moved.date - self.today()).days
+        day = "сегодня" if shift == 0 else "завтра" if shift == 1 else f"{moved.date.day} {T.MONTHS_GEN[moved.date.month - 1]}"
+        return Reply(f"🎩 Готово, Сэр! Перенёс напоминание!\n\n🔔 {moved.title} — {day} в {moved.start_time}")
 
     def _create_reminder(self, r: BrainResult) -> Reply:
         what = (r.title or r.event_title or r.content or "").strip()
@@ -246,6 +281,12 @@ class ScheduleMixin:
         if not at and r.intent == "DELETE_EVENT":
             at = parse_time_range(self._message)[0]  # «Удали врача 18:30» — время есть в самом сообщении
         words = r.target if r.target and r.target != "LAST" and not infer_type(r.target) else None
+        if said == "reminder":
+            # «Удали напоминание про встречу» — ищем среди напоминаний по словам «встреча»
+            about = re.sub(r"напоминани\w*\s*(?:про|о|об|на)?\s*", " ", f"{r.target or ''} {self._message or ''}",
+                           flags=re.I)
+            about = re.sub(r"\b(удали|убери|отмени|перенеси|измени|поменяй|удалить)\w*\b", " ", about, flags=re.I)
+            words = " ".join(about.split()) or None
         found = self.schedule.find(self.today(), words, etype, on, at)
         if not found and at:
             found = self.schedule.find(self.today(), words, etype, on, None)
