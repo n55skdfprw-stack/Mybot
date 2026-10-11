@@ -28,6 +28,9 @@ class FakeBot:
     async def delete_message(self, chat_id, message_id):
         self.deleted.append(message_id)
 
+    async def delete_messages(self, chat_id, message_ids):
+        self.swept = getattr(self, "swept", []) + list(message_ids)
+
     async def send_document(self, chat_id, document, caption=None, **kw):
         self.next_id += 1
         if isinstance(document, str):
@@ -96,3 +99,20 @@ def test_system_view_has_backup(tmp_path):
     r = run(admin.system_view())
     assert "💾 Резерв: канал не подключён" in r.text and [("📁 Резерв", "bk:view")] in r.buttons
     assert "Как подключить папку" in bk.view().text
+
+
+def test_restore_keeps_backup_list_and_night_copy_cleans_up(tmp_path):
+    """Живая ошибка: после восстановления список копий откатывался, и ночная копия
+    больше не удаляла лишние файлы в канале."""
+    access, admin, llm, bot, bk = make(tmp_path)
+    run(bk.connect(CHANNEL))
+    run(bk.run())
+    before = [c["msg"] for c in bk.copies()]
+    run(bk.callback("bk:rest:0", 1000))
+    run(bk.callback("bk:yes", 1000))
+    assert [c["msg"] for c in bk.copies()] == before          # список копий не откатился
+    run(bk.run())                                              # «ночная» копия
+    kept = [c["msg"] for c in bk.copies()]
+    assert len(kept) == 2 and before[0] not in kept
+    assert before[0] in bot.deleted
+    assert all(m < min(kept) for m in bot.swept)               # подчистка — только то, что старше хранимых

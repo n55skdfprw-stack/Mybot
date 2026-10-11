@@ -87,7 +87,22 @@ class BackupManager:
                 log.warning("Не удалось удалить старую копию %s", old.get("msg"))
         self._save_copies(items)
         self.users.set_setting("backup_error", None)
+        await self._sweep(items)
         return None
+
+    async def _sweep(self, kept: list[dict]) -> None:
+        """Подчищаем «забытые» файлы: всё, что в канале старше самой старой хранимой копии.
+        Номера сообщений в канале идут по порядку, поэтому удаляем диапазон перед ней (не больше 300 назад).
+        Так лишние копии уходят, даже если список копий когда-то сбился (например, после восстановления)."""
+        if not kept:
+            return
+        oldest = min(c["msg"] for c in kept)
+        ids = list(range(max(1, oldest - 300), oldest))
+        for start in range(0, len(ids), 100):          # Telegram удаляет до 100 за раз, несуществующие пропускает
+            try:
+                await self.bot.delete_messages(self.channel, ids[start:start + 100])
+            except Exception:
+                log.warning("Не удалось подчистить старые сообщения в канале")
 
     async def connect(self, chat_id: int) -> Reply:
         """Подключить канал: проверяем, что можем туда писать и удалять, и сразу делаем первую копию."""
@@ -172,7 +187,12 @@ class BackupManager:
         if action == "yes" and self._restore:
             raw, label = self._restore
             self._restore = None
+            # Настройки резерва (канал и список копий) — НЕ из копии, а текущие: иначе после восстановления
+            # Альфред «забудет» свежие файлы в канале и перестанет их удалять.
+            keep = {k: self.users.setting(k) for k in ("backup_channel", "backup_copies", "backup_error")}
             restore_backup(self.access.db, raw)
+            for k, v in keep.items():
+                self.users.set_setting(k, v)
             self.access._alfreds.clear()          # у всех — свежие данные из восстановленной базы
             self.access.setup_owner()
             return Reply(f"🎩 Готово, Сэр! База восстановлена из копии {label}!", edit=True)
