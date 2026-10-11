@@ -599,29 +599,41 @@ class FinanceMixin:
         t = _norm(self._message or "")
         direction = r.direction
         if not direction:
-            if re.search(r"мне\s+должн|должн\w*\s+мне|кто\s+(мне\s+)?должен", t):
+            if re.search(r"мне\s+долж|долж\w*\s+мне|кто\s+(мне\s+)?должен", t):
                 direction = "owes_me"
-            elif re.search(r"я\s+должен|я\s+должна|кому\s+я", t):
+            elif re.search(r"я\s+долж|кому\s+я|долж\w*\s+я\b", t):
                 direction = "i_owe"
-        person = self._debt_person(r)
+        person, said = self._debt_person(r)
         if person:
             return self.person_debt_view(person, direction)
+        if said:   # назвали человека, которого нет среди долгов, — не показываем всех подряд
+            return Reply(f"🎩 Сэр, долгов с человеком по имени {said} у вас нет! Вы в расчёте!", buttons=FIN_BUTTONS)
         return self.debts_view(direction)
 
+    _NOT_NAMES = ("сколько", "кто", "кому", "долги", "долг", "мне", "покажи", "должен", "должна", "альфред",
+                  "какой", "какие", "а", "и", "скажи", "напомни", "сэр", "мэм")
+
     def _debt_person(self, r: BrainResult):
-        """Про кого спросили: «Сколько Сергей должен мне?» — только про Сергея, а не список всех."""
+        """Про кого спросили: «Сколько Сергей должен мне?» — только про Сергея, а не список всех.
+        Возвращает (человек, None) — нашли; (None, «Дима») — назвали, но такого нет; (None, None) — имени не было."""
         from .lookup import _is_person
-        names = [r.person] if r.person else []
-        names += re.findall(r"\b[А-ЯЁ][а-яё]{2,}", self._raw_text or self._message or "")
+        text = self._raw_text or self._message or ""
+        words = re.findall(r"\b[А-ЯЁ][а-яё]{2,}", text)
+        first = re.match(r"\s*([А-ЯЁа-яё]+)", text)
+        names = ([r.person] if r.person else []) + words
         for name in names:
             query = search.normalize(name).strip()
-            if not query or query.split()[0] in ("сколько", "кто", "кому", "долги", "мне", "покажи", "должен",
-                                                 "должна", "альфред", "какой", "какие"):
+            if not query or query.split()[0] in self._NOT_NAMES:
                 continue
             people = [p for p in self.debts.find_people(name) if _is_person(query, p)]
             if len(people) == 1:
-                return people[0]
-        return None
+                return people[0], None
+        if r.person and search.normalize(r.person).split()[0] not in self._NOT_NAMES:
+            return None, r.person
+        for w in words:   # имя с большой буквы не в начале фразы: «Сколько Дима должен мне»
+            if search.normalize(w) not in self._NOT_NAMES and not (first and first.group(1) == w):
+                return None, w
+        return None, None
 
     def person_debt_view(self, person, direction: Optional[str] = None) -> Reply:
         owes, mine = self.debts.get(person, "owes_me"), self.debts.get(person, "i_owe")

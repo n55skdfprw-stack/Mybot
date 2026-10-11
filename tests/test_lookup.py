@@ -108,3 +108,14 @@ def test_debt_of_one_person(tmp_path):
     llm.said(intent="SHOW_DEBTS", person="Маша")
     a.debts.create_person("Маша")
     assert "в расчёте" in run(a.handle_text("Сколько Маша мне должна")).text
+
+
+def test_debt_of_unknown_person(tmp_path):
+    a, llm, _ = owner_alfred(tmp_path)
+    a.debts.add(a.debts.create_person("Сергей"), "owes_me", 5000)
+    llm.said(intent="SHOW_DEBTS")
+    r = run(a.handle_text("Сколько Дима должен мне"))
+    assert "Дима" in r.text and "в расчёте" in r.text and "Сергей" not in r.text
+    llm.said(intent="SHOW_DEBTS")
+    r = run(a.handle_text("Кто должен мне"))
+    assert r.text.startswith("🎩 Вот кто вам должен") and "Сергей" in r.text
