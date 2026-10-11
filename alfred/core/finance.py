@@ -251,10 +251,7 @@ class FinanceMixin:
         return found
 
     def _ambiguous_ops(self, r: BrainResult, ops: list[Operation]) -> Reply:
-        self._set_pending(r.intent, None, {"result": self._dump(r), "question": "выбор из списка",
-                                           "choose": "finance"})
-        rows = [[(F.op_line(o), f"pick:{o.id}")] for o in ops[:8]]
-        rows.append([("↩️ Отмена", "pick:cancel")])
+        rows = self._choice(r.intent, r, "finance", [(F.op_line(o), o.id) for o in ops])
         return Reply("🎩 Сэр, уточните, пожалуйста, какую именно запись?", buttons=rows)
 
     def _update_finance(self, r: BrainResult, chosen: Optional[Operation] = None) -> Reply:
@@ -443,9 +440,7 @@ class FinanceMixin:
             return Reply(f"🎩 Сэр, у меня нет записей о человеке по имени {name}!")
         if len(people) == 1:
             return people[0]
-        self._set_pending(action, None, {"result": self._dump(r), "question": "выбор из списка", "choose": "person"})
-        rows = [[(p.full_name, f"pick:{p.id}")] for p in people[:8]]
-        rows.append([("↩️ Отмена", "pick:cancel")])
+        rows = self._choice(action, r, "person", [(p.full_name, p.id) for p in people])
         return Reply(f"🎩 Сэр, уточните, пожалуйста, какой {name}?", buttons=rows)
 
     def _create_debt(self, r: BrainResult, chosen: Optional[Person] = None) -> Reply:
@@ -482,9 +477,7 @@ class FinanceMixin:
         return None
 
     def _ambiguous_debts(self, r: BrainResult, items: list[tuple[Person, Debt]]) -> Reply:
-        self._set_pending(r.intent, None, {"result": self._dump(r), "question": "выбор из списка", "choose": "debt"})
-        rows = [[(self.debt_line(p, d), f"pick:{d.id}")] for p, d in items[:8]]
-        rows.append([("↩️ Отмена", "pick:cancel")])
+        rows = self._choice(r.intent, r, "debt", [(self.debt_line(p, d), d.id) for p, d in items])
         return Reply("🎩 Сэр, уточните, пожалуйста, какой именно долг?", buttons=rows)
 
     def _find_debt(self, r: BrainResult) -> Debt | Reply | None:

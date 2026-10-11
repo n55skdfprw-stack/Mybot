@@ -47,11 +47,9 @@ class BirthdayMixin:
         return None
 
     def _ambiguous_birthdays(self, r: BrainResult, items: list[Birthday]) -> Reply:
-        self._set_pending(r.intent, None, {"result": self._dump(r), "question": "выбор из списка",
-                                           "choose": "birthday"})
         today = self.today()
-        rows = [[(B.line(self._name(b.person_id), b, today)[:60], f"pick:{b.id}")] for b in items[:8]]
-        rows.append([("↩️ Отмена", "pick:cancel")])
+        rows = self._choice(r.intent, r, "birthday",
+                            [(B.line(self._name(b.person_id), b, today)[:60], b.id) for b in items])
         return Reply("🎩 Сэр, уточните, пожалуйста, чей именно день рождения?", buttons=rows)
 
     def _find_birthday(self, r: BrainResult) -> Birthday | Reply | None:

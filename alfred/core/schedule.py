@@ -431,11 +431,9 @@ class ScheduleMixin:
         rules = {e.recurrence_id for e in found}
         if len(rules) == 1 and None not in rules:
             return min(found, key=event_dt)  # одно повторяющееся занятие — берём ближайшее
-        self._set_pending(r.intent, None, {"result": self._dump(r), "question": "выбор из списка",
-                                           "choose": "event"})
         today = self.today()
-        rows = [[(S.short_choice(e, today), f"pick:{e.id}")] for e in sorted(found, key=event_dt)[:8]]
-        rows.append([("↩️ Отмена", "pick:cancel")])
+        rows = self._choice(r.intent, r, "event",
+                            [(S.short_choice(e, today), e.id) for e in sorted(found, key=event_dt)])
         return Reply("🎩 Сэр, уточните, пожалуйста, какое именно событие?", buttons=rows)
 
     # ------------------------------------------------------------ изменение

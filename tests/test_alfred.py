@@ -139,9 +139,29 @@ def test_ambiguity_then_pick(tmp_path):
     r = run(a.handle_text("Удали дело про Сергея"))
     assert r.text.endswith("?") and r.buttons
     task_id = a.tasks.find("Написать Сергею")[0].id
-    r2 = a.handle_callback(f"pick:{task_id}")
+    [data] = [b[0][1] for b in r.buttons if b[0][1].endswith(f":{task_id}")]
+    r2 = a.handle_callback(data)
     assert r2.edit and "Написать Сергею" in r2.text
     assert [t.title for t in a.tasks.active()] == ["Позвонить Сергею"]
+
+
+def test_old_pick_button_does_not_hit_new_question(tmp_path):
+    """Кнопка от старого вопроса «какое дело?» не должна сработать на новый вопрос «какую заметку?»."""
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_TASK", title="Позвонить Сергею")
+    llm.said(intent="CREATE_TASK", title="Написать Сергею")
+    llm.said(intent="CREATE_NOTE", content="Сергей любит чай")
+    llm.said(intent="CREATE_NOTE", content="Сергей живёт в Туле")
+    for _ in range(4):
+        run(a.handle_text("x"))
+    llm.said(intent="DELETE_TASK", target="Сергею")
+    old = run(a.handle_text("Удали дело про Сергея"))
+    llm.said(intent="DELETE_NOTE", target="Сергей")
+    run(a.handle_text("Удали заметку про Сергея"))
+    r = a.handle_callback(old.buttons[0][0][1])          # нажали кнопку из первого вопроса
+    assert "неактуален" in r.text
+    assert len(a.tasks.active()) == 2 and len(a.notes.all()) == 2
+    assert a.handle_callback("pick:1").text.startswith("🎩 Сэр, этот вопрос")   # кнопка старого образца
 
 
 def test_mass_delete_requires_confirmation(tmp_path):

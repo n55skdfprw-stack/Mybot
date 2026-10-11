@@ -34,7 +34,8 @@ def build_scheduler(bot: Bot, access: Access, backup=None) -> AsyncIOScheduler:
         """Выполнить задачу для каждого пользователя. Ошибка у одного не мешает остальным."""
         for acc, alfred in access.active():
             try:
-                await job(acc, alfred)
+                async with access.lock(acc.id):      # не вклиниваемся посреди команды человека
+                    await job(acc, alfred)
             except Exception:
                 log.exception("%s failed for user %s", name, acc.id)
 

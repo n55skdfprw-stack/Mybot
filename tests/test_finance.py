@@ -250,7 +250,8 @@ def test_ambiguous_name_asks(tmp_path):
             amount_text="1000")
     assert r.text == "🎩 Сэр, уточните, пожалуйста, какой Сергей?" and len(r.buttons) == 3
     pid = a.debts.find_people("Сергей Петров")[0].id
-    a.handle_callback(f"pick:{pid}")
+    [data] = [b[0][1] for b in r.buttons if b[0][1].endswith(f":{pid}")]
+    a.handle_callback(data)
     [(p, d)] = a.debts.active()
     assert p.last_name == "Петров" and d.amount == 1000
 
@@ -390,8 +391,7 @@ def test_debt_correction_asks_which(tmp_path):
     a._set_last("debt", None)
     r = say(a, llm, "Исправь долг на 4000", intent="UPDATE_DEBT", new_amount_text="4000")
     assert "какой именно долг" in r.text and len(r.buttons) == 3
-    debt_id = int(r.buttons[1][0][1].split(":")[1])
-    r = a.handle_callback(f"pick:{debt_id}")
+    r = a.handle_callback(r.buttons[1][0][1])
     assert "Исправил долг" in r.text
     assert sorted(d.amount for _, d in a.debts.active()) == [4000, 5000]
 

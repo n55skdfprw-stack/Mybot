@@ -9,7 +9,7 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.exceptions import (TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter,
                                 TelegramServerError)
 from aiogram.filters import Command, CommandStart
-from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove, User
+from aiogram.types import CallbackQuery, ErrorEvent, Message, ReplyKeyboardRemove, User
 
 from ..core.access import Access, Visitor
 from ..core.admin import Admin
@@ -38,14 +38,39 @@ async def send_with_retry(bot: Bot, chat_id: int, text: str, **kw):
             await asyncio.sleep(1 + attempt * 2)
 
 
+TEXT_LIMIT = 4000          # Telegram не принимает сообщения длиннее 4096 символов
+
+
+def split_text(text: str, limit: int = TEXT_LIMIT) -> list[str]:
+    """Длинный ответ — несколькими сообщениями: режем по пустой строке, иначе по строке, в крайнем случае — по символам."""
+    parts = []
+    while len(text) > limit:
+        cut = text.rfind("\n\n", 0, limit)
+        if cut <= 0:
+            cut = text.rfind("\n", 0, limit)
+        if cut <= 0:
+            cut = limit
+        parts.append(text[:cut].rstrip())
+        text = text[cut:].lstrip("\n")
+    parts.append(text)
+    return [p for p in parts if p.strip()] or [text]
+
+
+async def send_long(bot: Bot, chat_id: int, text: str, markup, **kw) -> None:
+    """Отправить ответ любой длины; кнопки — под последним куском."""
+    chunks = split_text(text)
+    for i, chunk in enumerate(chunks):
+        await send_with_retry(bot, chat_id, chunk, reply_markup=markup if i == len(chunks) - 1 else None, **kw)
+
+
 async def send_reply(bot: Bot, chat_id: int, reply: Reply, owner: bool = False,
                      address: str | None = None) -> None:
     reply = personalize(reply, address)
     markup = inline(reply.buttons) or main_menu(owner)
-    await send_with_retry(bot, chat_id, reply.text, reply_markup=markup, protect_content=reply.protect)
+    await send_long(bot, chat_id, reply.text, markup, protect_content=reply.protect)
     for extra in reply.extra:
-        await send_with_retry(bot, chat_id, extra.text, reply_markup=inline(extra.buttons) or main_menu(owner),
-                              protect_content=extra.protect)
+        await send_long(bot, chat_id, extra.text, inline(extra.buttons) or main_menu(owner),
+                        protect_content=extra.protect)
 
 
 def build_router(access: Access, admin: Admin, backup=None) -> Router:
@@ -191,7 +216,9 @@ def build_router(access: Access, admin: Admin, backup=None) -> Router:
             await send_reply(bot, message.chat.id, reply, owner=True, address=v.account.address)
             return
         if message.text:
-            await on_text(message, bot)
+            # сразу к разбору текста: повторный вход через on_text принял бы сообщение за дубль и промолчал
+            async with access.lock(v.account.id):
+                await handle_text(message, bot, v)
 
     @router.message(F.document)
     async def on_document(message: Message, bot: Bot):
@@ -212,6 +239,10 @@ def build_router(access: Access, admin: Admin, backup=None) -> Router:
         v = await gate(message, bot)
         if not v:
             return
+        async with access.lock(v.account.id):        # сообщения одного человека — строго по очереди
+            await handle_text(message, bot, v)
+
+    async def handle_text(message: Message, bot: Bot, v: Visitor):
         owner = v.kind == "owner"
         if is_word(message.text, T.PRIVACY_WORDS):
             await send_reply(bot, message.chat.id, Reply(T.PRIVACY), owner=owner, address=v.account.address)
@@ -266,6 +297,10 @@ def build_router(access: Access, admin: Admin, backup=None) -> Router:
         if v.kind != "owner" and not limiter.allow(callback.from_user.id)[0]:
             await callback.answer("Не так быстро 🙂")
             return
+        async with access.lock(v.account.id):        # нажатия — по очереди с сообщениями этого человека
+            await handle_callback(callback, bot, v)
+
+    async def handle_callback(callback: CallbackQuery, bot: Bot, v: Visitor):
         owner = v.kind == "owner"
         data = callback.data or ""
         if not owner and access.stopped_for_all:
@@ -350,18 +385,41 @@ def build_router(access: Access, admin: Admin, backup=None) -> Router:
         reply = personalize(reply, v.account.address)
         await callback.answer(reply.toast or None)
         msg = callback.message
+        fits = len(reply.text) <= TEXT_LIMIT     # слишком длинное не влезет в старое сообщение — пришлём новыми
         try:
-            if reply.edit and msg:
+            if reply.edit and msg and fits:
                 await msg.edit_text(reply.text, reply_markup=inline(reply.buttons))
                 return
-            if reply.clear_source_buttons and msg:
+            if (reply.clear_source_buttons or reply.edit) and msg:
                 await msg.edit_reply_markup(reply_markup=None)
         except TelegramBadRequest as exc:
             # Например, «сообщение не изменилось» — это не ошибка для пользователя.
             log.info("Edit skipped: %s", exc)
-            if reply.edit:
+            if reply.edit and fits:
                 return
         await send_reply(bot, callback.from_user.id, reply, owner=owner, address=v.account.address)
+
+    @router.errors()
+    async def on_error(event: ErrorEvent, bot: Bot):
+        """Непредвиденная ошибка: записываем в журнал и вежливо говорим человеку, а не молчим."""
+        log.error("Ошибка при обработке сообщения", exc_info=event.exception)
+        update = event.update
+        if update.callback_query:
+            chat_id = update.callback_query.from_user.id
+            try:
+                await update.callback_query.answer()         # убираем «часики» с кнопки
+            except Exception:
+                pass
+        elif update.message and update.message.from_user:
+            chat_id = update.message.from_user.id
+        else:
+            return
+        try:
+            acc = access.users.by_telegram(chat_id)
+            if acc and acc.status == "active":               # чужим и закрытым — молчим, как и раньше
+                await bot.send_message(chat_id, personalize(Reply(T.SOMETHING_WRONG), acc.address).text)
+        except Exception:
+            log.exception("Не удалось сообщить об ошибке")
 
     return router
 

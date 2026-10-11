@@ -6,6 +6,7 @@
 
 import logging
 import re
+import secrets
 import sqlite3
 from dataclasses import asdict, replace
 from datetime import date, datetime, timedelta
@@ -546,18 +547,24 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
                                               "said": self._message})
         return Reply(question)
 
+    def _choice(self, intent: str, r: BrainResult, choose: str, items: list[tuple[str, int]]) -> list:
+        """Вопрос «какой именно?»: запоминаем его и делаем кнопки. В каждой кнопке — метка этого вопроса,
+        чтобы кнопка от старого вопроса не сработала на новый (и не удалила не ту запись)."""
+        tag = secrets.token_hex(3)
+        self._set_pending(intent, None, {"result": self._dump(r), "question": "выбор из списка",
+                                         "choose": choose, "tag": tag})
+        rows = [[(label, f"pick:{tag}:{obj_id}")] for label, obj_id in items[:8]]
+        rows.append([("↩️ Отмена", f"pick:{tag}:cancel")])
+        return rows
+
     def _ambiguous(self, r: BrainResult, kind: str, items: list) -> Reply:
-        self._set_pending(r.intent, None, {"result": self._dump(r), "question": "выбор из списка",
-                                           "choose": kind})
         if kind == "task":
             text = "🎩 Сэр, уточните, пожалуйста, какое именно дело?"
-            rows = [[("⭕ " + T.short(t.title) + T.due_label(t.due_date, self.today()), f"pick:{t.id}")]
-                    for t in items[:8]]
+            labels = [("⭕ " + T.short(t.title) + T.due_label(t.due_date, self.today()), t.id) for t in items]
         else:
             text = "🎩 Сэр, уточните, пожалуйста, какую именно заметку?"
-            rows = [[("📝 " + T.short(n.content), f"pick:{n.id}")] for n in items[:8]]
-        rows.append([("↩️ Отмена", "pick:cancel")])
-        return Reply(text, buttons=rows)
+            labels = [("📝 " + T.short(n.content), n.id) for n in items]
+        return Reply(text, buttons=self._choice(r.intent, r, kind, labels))
 
     # ------------------------------------------------------------------ дела
     def _resolve(self, r: BrainResult, kind: str) -> list:
@@ -857,11 +864,17 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
 
         if kind == "pick":
             ctx = self._ctx()
-            if parts[1] == "cancel" or not ctx.intent or "choose" not in ctx.data:
+            tag, choice = (parts[1], parts[2]) if len(parts) == 3 else (None, parts[-1])
+            if not ctx.intent or "choose" not in ctx.data or tag != ctx.data.get("tag"):
+                # кнопка от старого вопроса: текущий вопрос не трогаем
+                if choice == "cancel":
+                    return Reply(T.CANCELLED, edit=True)
+                return Reply("🎩 Сэр, этот вопрос уже неактуален! Если нужно — повторите просьбу!", edit=True)
+            if not choice.isdigit():
                 self._clear_pending()
                 return Reply(T.CANCELLED, edit=True)
             r = self._load(ctx.data["result"])
-            obj_id = int(parts[1])
+            obj_id = int(choice)
             self._clear_pending()
             if ctx.data["choose"] == "finance":
                 op = self.finance.get(obj_id)

@@ -57,10 +57,7 @@ class MedMixin:
         return None
 
     def _ambiguous_cases(self, r: BrainResult, cases: list[Case]) -> Reply:
-        self._set_pending(r.intent, None, {"result": self._dump(r), "question": "выбор из списка",
-                                           "choose": "med_case"})
-        rows = [[(M.case_button(c, self.today()), f"pick:{c.id}")] for c in cases[:8]]
-        rows.append([("↩️ Отмена", "pick:cancel")])
+        rows = self._choice(r.intent, r, "med_case", [(M.case_button(c, self.today()), c.id) for c in cases])
         return Reply("🎩 Сэр, уточните, пожалуйста, о какой болезни речь?", buttons=rows)
 
     def _pick_case(self, r: BrainResult, open_only: bool = True) -> Case | Reply | None:

@@ -124,6 +124,75 @@ def test_send_retries(monkeypatch):
     assert bot.calls == 3
 
 
+class RecordingBot:
+    def __init__(self):
+        self.sent = []
+
+    async def send_message(self, chat_id, text, **kw):
+        self.sent.append((chat_id, text, kw))
+        return "ok"
+
+
+def test_long_reply_is_split_buttons_under_last(monkeypatch):
+    """Ответ длиннее лимита Telegram уходит несколькими сообщениями, ничего не теряется."""
+    from alfred.core.reply import Reply
+    from alfred.handlers import telegram as tg
+    bot = RecordingBot()
+    text = "🎩 Ваши заметки, Сэр!\n\n" + "\n".join(f"📝 Заметка {i} " + "слово " * 60 for i in range(30))
+    run(tg.send_reply(bot, 1, Reply(text, buttons=[[("Ок", "x:1")]])))
+    assert len(bot.sent) > 1
+    assert all(len(t) <= 4096 for _, t, _ in bot.sent)
+    words = lambda s: "".join(s.split())       # noqa: E731 — сравниваем без пробелов и переносов на стыках
+    assert words("".join(t for _, t, _ in bot.sent)) == words(text)
+    markups = [kw["reply_markup"] for _, _, kw in bot.sent]
+    assert markups[:-1] == [None] * (len(markups) - 1) and markups[-1].inline_keyboard
+    assert tg.split_text("x" * 9000) == ["x" * 4000, "x" * 4000, "x" * 1000]   # без переносов — режем по символам
+
+
+def test_one_queue_per_user(tmp_path):
+    _, _, access = owner_alfred(tmp_path)
+    assert access.lock(1) is access.lock(1) and access.lock(1) is not access.lock(2)
+
+
+def test_messages_of_one_user_wait_for_each_other(tmp_path):
+    """Пока Альфред думает над первым сообщением, второе ждёт, а не перебивает его."""
+    _, _, access = owner_alfred(tmp_path)
+    order = []
+
+    async def command(name, delay):
+        async with access.lock(7):
+            order.append(f"{name} начал")
+            await asyncio.sleep(delay)
+            order.append(f"{name} закончил")
+
+    async def both():
+        await asyncio.gather(command("первое", 0.05), command("второе", 0))
+    run(both())
+    assert order == ["первое начал", "первое закончил", "второе начал", "второе закончил"]
+
+
+def test_unexpected_error_gets_polite_answer(tmp_path):
+    """Непредвиденная ошибка: человек получает извинение, а не тишину; чужим — ничего."""
+    from datetime import datetime
+    from aiogram.types import Chat, ErrorEvent, Message, Update, User
+    from alfred.handlers import telegram as tg
+    from .test_access import OWNER
+    access, admin, _ = make(tmp_path)
+    router = tg.build_router(access, admin)
+    on_error = router.errors.handlers[0].callback
+
+    def event(user_id):
+        msg = Message(message_id=1, date=datetime.now(), chat=Chat(id=user_id, type="private"),
+                      from_user=User(id=user_id, is_bot=False, first_name="A"), text="привет")
+        return ErrorEvent(update=Update(update_id=1, message=msg), exception=RuntimeError("сбой"))
+
+    bot = RecordingBot()
+    run(on_error(event(OWNER), bot))
+    assert bot.sent == [(OWNER, tg.T.SOMETHING_WRONG, {})]
+    run(on_error(event(424242), bot))                      # незнакомец — молчим
+    assert len(bot.sent) == 1
+
+
 def test_med_reminder_requeued_after_failed_send(tmp_path):
     from datetime import date, datetime
     from .test_alfred import TZ

@@ -3,6 +3,7 @@
 У каждого свой Альфред со своими данными. Владелец не видит чужих данных — только список и статистику.
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -47,6 +48,7 @@ class Access:
         self.users = UserRepository(db)
         self.started = datetime.now(tz)
         self._alfreds: dict[int, Alfred] = {}
+        self._locks: dict[int, asyncio.Lock] = {}
 
     # ------------------------------------------------------------ владелец
     def setup_owner(self) -> Account:
@@ -98,6 +100,11 @@ class Access:
             a.quota = self._quota(acc.id, a)
             self._alfreds[acc.id] = a
         return a
+
+    def lock(self, user_id: int) -> asyncio.Lock:
+        """Очередь одного человека: его сообщения, кнопки и напоминания выполняются по одному, а не вперемешку
+        (иначе, пока ИИ думает над первым сообщением, второе перебивает его)."""
+        return self._locks.setdefault(user_id, asyncio.Lock())
 
     def forget(self, user_id: int) -> None:
         self._alfreds.pop(user_id, None)
