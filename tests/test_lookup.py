@@ -89,3 +89,22 @@ def test_fuzzy_names():
     assert not _loose_same("Дима", "Дина") and not _loose_same("Оля", "Юля")
     assert score("домафон", "Код домофона 1234") and score("иванпетров", "Иван Петров")
     assert not score("Дима", "Дина")
+
+
+def test_debt_of_one_person(tmp_path):
+    a, llm, _ = owner_alfred(tmp_path)
+    s = a.debts.create_person("Сергей")
+    a.debts.add(s, "owes_me", 5000)
+    a.debts.add(a.debts.create_person("Пётр"), "owes_me", 1000)
+    llm.said(intent="SHOW_DEBTS", direction="owes_me")          # ИИ не назвал человека
+    r = run(a.handle_text("Сколько Сергей должен мне"))
+    assert "Сергей" in r.text and "5 000" in r.text and "Пётр" not in r.text
+    llm.said(intent="SHOW_DEBTS", person="Серёга")
+    r = run(a.handle_text("Сколько мне должен серёга?"))
+    assert "Должен вам: 5 000" in r.text and "Пётр" not in r.text
+    llm.said(intent="SHOW_DEBTS", direction="owes_me")
+    r = run(a.handle_text("Кто мне должен?"))
+    assert "Сергей" in r.text and "Пётр" in r.text
+    llm.said(intent="SHOW_DEBTS", person="Маша")
+    a.debts.create_person("Маша")
+    assert "в расчёте" in run(a.handle_text("Сколько Маша мне должна")).text

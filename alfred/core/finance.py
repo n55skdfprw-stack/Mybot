@@ -603,7 +603,37 @@ class FinanceMixin:
                 direction = "owes_me"
             elif re.search(r"я\s+должен|я\s+должна|кому\s+я", t):
                 direction = "i_owe"
+        person = self._debt_person(r)
+        if person:
+            return self.person_debt_view(person, direction)
         return self.debts_view(direction)
+
+    def _debt_person(self, r: BrainResult):
+        """Про кого спросили: «Сколько Сергей должен мне?» — только про Сергея, а не список всех."""
+        from .lookup import _is_person
+        names = [r.person] if r.person else []
+        names += re.findall(r"\b[А-ЯЁ][а-яё]{2,}", self._raw_text or self._message or "")
+        for name in names:
+            query = search.normalize(name).strip()
+            if not query or query.split()[0] in ("сколько", "кто", "кому", "долги", "мне", "покажи", "должен",
+                                                 "должна", "альфред", "какой", "какие"):
+                continue
+            people = [p for p in self.debts.find_people(name) if _is_person(query, p)]
+            if len(people) == 1:
+                return people[0]
+        return None
+
+    def person_debt_view(self, person, direction: Optional[str] = None) -> Reply:
+        owes, mine = self.debts.get(person, "owes_me"), self.debts.get(person, "i_owe")
+        lines = []
+        if owes and direction != "i_owe" or owes and not mine:
+            lines.append(f"🤝 Должен вам: {F.money(owes.amount)}")
+        if mine and direction != "owes_me" or mine and not owes:
+            lines.append(f"💸 Вы должны: {F.money(mine.amount)}")
+        if not lines:
+            return Reply(f"🎩 Сэр, долгов с человеком по имени {person.full_name} нет! Вы в расчёте!",
+                         buttons=FIN_BUTTONS)
+        return Reply(f"🎩 Разумеется, Сэр!\n\n👤 {person.full_name}\n" + "\n".join(lines), buttons=FIN_BUTTONS)
 
     # ------------------------------------------------------------ валюты
     def rates_view(self, only: Optional[str] = None, edit: bool = False) -> Reply:
