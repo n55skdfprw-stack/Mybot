@@ -17,6 +17,21 @@ $env:ALFRED_TEST_ENCRYPT='1'; python -m pytest; Remove-Item Env:ALFRED_TEST_ENCR
 
 Если что-то падает — чини, а не отключай тест. Не считай задачу готовой, пока оба прогона не зелёные.
 
+Новое поведение бота покрывай тестом. Всё, что связано с Telegram (очередь, кнопки, длинные ответы, ошибки),
+проверяй сквозными тестами в `tests/test_telegram_flow.py`. Если меняется то, что понимает GigaChat, добавь фразу
+в `SCENARIOS` робота `tools/live_check.py`.
+
+Python на этом компьютере может не находиться в PATH сессии — перед запуском обнови PATH:
+`$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')`
+
+После Push GitHub сам прогоняет тесты (`.github/workflows/tests.yml`).
+
+## Проверка в боте
+В разделе «Что проверить в боте» в конце задачи:
+- предложи запустить робота: `python tools/live_check.py` — после этого прочитай `tools/live_report.txt`;
+- руками проси проверить только то, что робот не умеет (новые кнопки, внешний вид).
+- Робот входит в Telegram от аккаунта владельца: телефон, код и `API_HASH` владелец вводит сам, никогда не через меня.
+
 ## Версия
 При каждом изменении кода бота поднимай версию в двух местах одинаково:
 - `alfred/__init__.py` → `VERSION = "…"`

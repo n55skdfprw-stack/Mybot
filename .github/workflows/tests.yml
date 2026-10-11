@@ -1,0 +1,30 @@
+# Автопроверка: после каждого Push GitHub сам прогоняет все тесты — обычные и с шифрованием базы.
+# Если что-то упало, Railway (с включённым «Wait for CI») не обновит бота.
+name: Тесты
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Установка
+        run: pip install -r requirements.txt pytest
+      - name: Тесты
+        run: python -m pytest -q
+      - name: Тесты с шифрованием
+        run: python -m pytest -q
+        env:
+          ALFRED_TEST_ENCRYPT: "1"

@@ -793,7 +793,7 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
         tail = f"\n\nПоказаны последние 15 из {len(notes)}!" if len(notes) > 15 else ""
         return Reply(f"🎩 Ваши заметки, Сэр!\n\n{lines}{tail}")
 
-    # ------------------------------------------------------------------ проверки 10:00 / 14:00 / 18:00
+    # ------------------------------------------------------------------ проверки 8:00 / 14:00 / 18:00
     def check_message(self, period: str, weather: Optional[str] = None) -> Optional[Reply]:
         today = self.today()
         relevant = self.tasks.relevant(today)
