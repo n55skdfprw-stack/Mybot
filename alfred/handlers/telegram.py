@@ -234,12 +234,13 @@ def build_router(access: Access, admin: Admin, backup=None) -> Router:
             await send_reply(bot, message.chat.id, reply, owner=True, address=v.account.address)
             return
         if owner:
-            if message.text == T.MENU_SYSTEM:
+            menu = T.menu_guess(message.text, owner=True)
+            if message.text == T.MENU_SYSTEM or menu == T.MENU_SYSTEM:
                 await bot.send_chat_action(message.chat.id, "typing")
                 await send_reply(bot, message.chat.id, await admin.system_view(), owner=True,
                                  address=v.account.address)
                 return
-            reply = admin.command(message.text)
+            reply = admin.command(menu if menu == T.MENU_USERS else message.text)
             if reply:
                 await send_reply(bot, message.chat.id, reply, owner=True, address=v.account.address)
                 return

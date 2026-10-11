@@ -1,6 +1,7 @@
 """Тексты и оформление в стиле Альфреда. Предложения — с «!», вопросы — с «?»."""
 
 import random
+import re
 from datetime import date, datetime
 
 from ..database.repositories import Note, Task
@@ -49,6 +50,9 @@ HELP = ("🎩 С удовольствием расскажу, Сэр!\n\nПиш�
         "🩺 Медкарта — «Заболел ангиной, назначили амоксициллин 3 раза в день 7 дней». Напомню принять "
         "лекарства, а через год подскажу, чем лечились.\n\n"
         "🌤 Погода — «Какая погода завтра?». Утром пришлю погоду и совет, если нужен зонт. Уехали — «Я в Москве».\n\n"
+        "🔎 Поиск везде — «Что у меня про Сергея?»: соберу досье, день рождения, долги и все дела, встречи, "
+        "заметки и траты, где он упоминается. «Найди везде домофон» — поищу во всех разделах. "
+        "Опечатки не страшны: «Серёга», «домафон», «долар», «финнансы» — пойму.\n\n"
         "✏️ Ошиблись — исправьте словами: «Не 700, а 800», «Исправь имя на Даня». "
         "Или «Отмени последнее» — и я верну всё как было до последней команды.\n\n"
         "В синей кнопке «Меню»:\n"
@@ -91,6 +95,31 @@ WELCOME = ("🎩 Добро пожаловать, Сэр! Меня зовут А
            "Разделы — в меню внизу.\n\nВ день я отвечаю на {limit} сообщений, кнопки меню — без ограничений.")
 MENU_BUTTONS = [MENU_TASKS, MENU_SCHEDULE, MENU_NOTES, MENU_FINANCE, MENU_BIRTHDAYS, MENU_DOSSIER, MENU_WEATHER,
                 MENU_MED]
+
+_MENU_WORDS = {"дела": MENU_TASKS, "задачи": MENU_TASKS, "распорядок": MENU_SCHEDULE, "расписание": MENU_SCHEDULE,
+               "заметки": MENU_NOTES, "финансы": MENU_FINANCE, "днирождения": MENU_BIRTHDAYS,
+               "досье": MENU_DOSSIER, "погода": MENU_WEATHER, "медкарта": MENU_MED, "медкарточка": MENU_MED}
+_OWNER_MENU_WORDS = {"пользователи": MENU_USERS, "система": MENU_SYSTEM}
+
+
+def menu_guess(text: str, owner: bool = False) -> str | None:
+    """Кнопка меню, набранная руками и с опечаткой: «Дела», «погодв», «финнансы» → нужный раздел.
+    Срабатывает, только если сообщение целиком — название раздела (1–3 слова)."""
+    from ..services.search import normalize, typo_close
+    words = re.findall(r"[а-я]+", normalize(text))
+    if not 1 <= len(words) <= 3 or len(text) > 40:
+        return None
+    if words[0] in ("ваши", "мои", "ваш", "мой", "открой", "покажи") and len(words) > 1:
+        words = words[1:]
+    key = "".join(words)
+    table = dict(_MENU_WORDS, **(_OWNER_MENU_WORDS if owner else {}))
+    if key in table:
+        return table[key]
+    for word, button in table.items():
+        if typo_close(key, word):
+            return button
+    return None
+
 
 CANCEL_WORDS = {"отмена", "отмени", "отменить", "стоп", "cancel"}
 

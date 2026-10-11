@@ -17,7 +17,7 @@ _MULT = [(r"млн|миллион\w*|лям\w*", 1_000_000),
 CURRENCIES = {
     "RUB": (r"руб\w*|₽|rub|р\.?(?=\s|$)", "₽"),
     "USD": (r"доллар\w*|бакс\w*|usd|\$", "$"),
-    "EUR": (r"евро|eur|€", "€"),
+    "EUR": (r"евро|эвро|еуро|евра|eur|€", "€"),
     "CNY": (r"юан\w*|cny|¥", "¥"),
     "GBP": (r"фунт\w*|gbp|£", "£"),
     "TRY": (r"лир\w*|try", "₺"),
@@ -120,7 +120,7 @@ def parse_currency(text: Optional[str]) -> Optional[str]:
         if m:
             found.append((m.start(), code))
     if not found:
-        return None
+        return _currency_by_typo(t)
     codes = {c for _, c in found}
     if len(codes) > 1 and "BYN" in codes:
         return "BYN"
@@ -130,6 +130,22 @@ def parse_currency(text: Optional[str]) -> Optional[str]:
         if specific in codes and general in codes:
             return specific
     return sorted(found)[0][1]
+
+
+# Опечатки: «долар», «тенгэ», «рублй». Проверяем, только если точного совпадения нет.
+_TYPO_WORDS = {"доллар": "USD", "доллара": "USD", "долларов": "USD", "долларах": "USD", "тенге": "KZT",
+               "рубль": "RUB", "рубля": "RUB", "рублей": "RUB", "рублях": "RUB", "юаней": "CNY", "юаня": "CNY",
+               "фунтов": "GBP", "фунта": "GBP", "дирхам": "AED", "дирхамов": "AED", "франков": "CHF",
+               "франка": "CHF", "бакса": "USD", "баксов": "USD"}
+
+
+def _currency_by_typo(t: str) -> Optional[str]:
+    from ..services.search import typo_close
+    for word in re.findall(r"[а-я]+", t):
+        for known, code in _TYPO_WORDS.items():
+            if typo_close(word, known):
+                return code
+    return None
 
 
 def parse_conversion(text: str) -> tuple[Optional[float], Optional[str], Optional[str]]:

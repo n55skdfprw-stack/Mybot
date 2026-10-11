@@ -68,6 +68,41 @@ def _same_name(a: str, b: str) -> bool:
     return common >= max(3, min(len(a), len(b)) - 2)
 
 
+# Уменьшительные имена: «Серёга» и «Сергей» — один человек (только если точного совпадения нет).
+NICKS = [
+    ("сергей", "серега", "сережа", "серый", "серж"), ("александр", "саша", "саня", "шура", "санек"),
+    ("александра", "саша", "шура"), ("дмитрий", "дима", "димон", "митя"), ("евгений", "женя", "жека"),
+    ("евгения", "женя"), ("алексей", "леша", "леха", "алеша"), ("михаил", "миша", "мишаня"),
+    ("николай", "коля", "колян"), ("владимир", "вова", "володя", "вован"), ("павел", "паша", "пашка"),
+    ("петр", "петя"), ("иван", "ваня", "ванек"), ("мария", "маша", "маня"), ("екатерина", "катя"),
+    ("анастасия", "настя"), ("елена", "лена"), ("татьяна", "таня"), ("ольга", "оля"), ("юлия", "юля"),
+    ("наталья", "наташа"), ("константин", "костя"), ("андрей", "андрюха", "андрюша"),
+    ("максим", "макс"), ("артем", "тема", "темыч"), ("даниил", "даня", "данила"), ("георгий", "гоша", "жора"),
+    ("вячеслав", "слава"), ("станислав", "стас", "слава"), ("илья", "илюха", "илюша"),
+    ("анна", "аня", "анюта"), ("ксения", "ксюша"), ("дарья", "даша"), ("виктория", "вика"),
+    ("светлана", "света"), ("людмила", "люда"), ("валентина", "валя"), ("кирилл", "киря"),
+    ("роман", "рома"), ("антон", "тоха"), ("игорь", "гоша"), ("олег", "олежа"), ("тимофей", "тима"),
+]
+
+
+def _forms(name: str) -> set[str]:
+    """Все варианты имени: само имя + полное/уменьшительные из одной группы."""
+    out = {name}
+    for group in NICKS:
+        if any(_same_name(name, g) for g in group):
+            out.update(group)
+    return out
+
+
+def _loose_same(stored: str, said: str) -> bool:
+    """Мягкое сравнение: уменьшительные имена и опечатки («Сергй»)."""
+    said_n = search.normalize(said)
+    if any(_same_name(stored, f) for f in _forms(said_n)) or any(_same_name(said_n, f) for f in _forms(
+            search.normalize(stored))):
+        return True
+    return search.typo_close(search.normalize(stored), said_n)
+
+
 class DebtService:
     def __init__(self, debts: DebtRepository, people: PeopleRepository, user_id: int):
         self.debts = debts
@@ -78,9 +113,19 @@ class DebtService:
         words = name.split()
         first = words[0]
         last = words[1] if len(words) > 1 else None
-        found = [p for p in self.people.all(self.user_id) if _same_name(p.first_name, first)]
+        people = self.people.all(self.user_id)
+        if len(words) == 1 and len(first) >= 7:
+            # «иванпетров» — имя и фамилия слитно
+            joined = [p for p in people if p.last_name and
+                      search.typo_close(search.normalize(p.first_name + p.last_name), search.normalize(first))]
+            if joined:
+                return joined
+        found = [p for p in people if _same_name(p.first_name, first)]
+        if not found:                      # точно не нашли — пробуем «Серёга» → Сергей и опечатки
+            found = [p for p in people if _loose_same(p.first_name, first)]
         if last:
-            found = [p for p in found if p.last_name and _same_name(p.last_name, last)] or found
+            found = [p for p in found if p.last_name and (_same_name(p.last_name, last) or search.typo_close(
+                search.normalize(p.last_name), search.normalize(last)))] or found
         return found
 
     def person(self, person_id: int) -> Optional[Person]:

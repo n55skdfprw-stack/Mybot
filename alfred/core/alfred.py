@@ -42,6 +42,7 @@ UNDO_RE = re.compile(r"(?:альфред,?\s*)?(?:отмени\s+(?:послед
 HELP_RE = re.compile(r"^(?:/help|помощь|справка)$|что\s+ты\s+(?:умеешь|можешь)|что\s+умеешь|твои\s+(?:функции|возможности)|"
                      r"как\s+(?:тобой|с\s+тобой)\s+пользоваться|что\s+ты\s+за\s+бот|расскажи\s+о\s+себе")
 from .med import MED_INTENTS, MedMixin
+from .lookup import LookupMixin
 from ..database.med_repo import MedRepository
 from ..services.med import MedService
 from ..database.repositories import UserRepository
@@ -66,7 +67,7 @@ RESTORE_RE = re.compile(
 )
 
 
-class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMixin, MedMixin):
+class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMixin, MedMixin, LookupMixin):
     def __init__(self, brain: Brain, tasks: TaskService, notes: NoteService, schedule: ScheduleService,
                  context: ContextRepository, user_id: int, tz: ZoneInfo,
                  clock: Optional[Callable[[], datetime]] = None, *,
@@ -265,6 +266,8 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
             return Reply(T.NOTHING_TO_CANCEL)
         if re.fullmatch(r"(?:🧹\s*)?чистый лист[.!]*", search.normalize(text).strip()):
             return self.reset_request()
+        if text not in T.MENU_BUTTONS:
+            text = T.menu_guess(text) or text      # «погодв», «Дела», «финнансы» — тоже кнопки
         if text == T.MENU_WEATHER:
             self._clear_pending()
             return await self.weather_view()
@@ -273,6 +276,9 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
         if HELP_RE.search(search.normalize(text)):
             self._clear_pending()
             return Reply(T.HELP)
+        found = self.try_lookup(text)
+        if found:
+            return found
         renamed = self.try_rename(text)
         if renamed:
             return renamed
@@ -827,6 +833,8 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
         parts = data.split(":")
         kind = parts[0]
 
+        if kind == "who" and len(parts) == 2 and parts[1].isdigit():
+            return self.person_everything(int(parts[1]))
         if data == "task:list":
             return self.tasks_list_view()
         if data == "task:open":
