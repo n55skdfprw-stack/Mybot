@@ -100,7 +100,11 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
 
     # ------------------------------------------------------------------ время
     def now(self) -> datetime:
-        return self._clock() if self._clock else datetime.now(self.tz)
+        """Время там, где сейчас человек (у каждого свой часовой пояс)."""
+        if self._clock:
+            t = self._clock()
+            return t.astimezone(self.tz) if t.tzinfo else t
+        return datetime.now(self.tz)
 
     def today(self) -> date:
         return self.now().date()
@@ -232,15 +236,16 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
             return
         after = self._snap()
         if after is not None and not undo_db.same(before, after):
-            self._undo_point = (before, label)
+            self._undo_point = (before, after, label)
 
     def undo(self) -> Reply:
         point = getattr(self, "_undo_point", None)
         if not point:
             return Reply("🎩 Сэр, отменять пока нечего!")
-        before, label = point
+        before, after, label = point
         self._undo_point = None
-        undo_db.restore(self.schedule.events.db.path, self.user_id, before)
+        # откатываем только то, что сделала команда; что бот сделал сам после неё — остаётся
+        undo_db.revert(self.schedule.events.db.path, self.user_id, before, after)
         self._clear_pending()
         self._set_last("task", None)
         return Reply(f"🎩 Сэр, последняя операция отменена!\n\n↩️ {label}")

@@ -63,6 +63,17 @@ def test_connect_and_keep_two_latest(tmp_path):
     assert all(ch == CHANNEL for ch, _ in bot.sent if _ and "💾" in _)
 
 
+def test_cleanup_never_touches_posts_from_before_connection(tmp_path):
+    """В канале уже было 500 постов владельца — подчистка старых копий их не трогает."""
+    access, admin, llm, bot, bk = make(tmp_path)
+    bot.next_id = 500
+    run(bk.connect(CHANNEL))
+    for _ in range(4):
+        run(bk.run())
+    since = int(access.users.setting("backup_since"))
+    assert since > 500 and bot.swept and all(m >= since for m in bot.swept)
+
+
 def test_not_admin_in_channel(tmp_path):
     access, admin, llm, bot, bk = make(tmp_path)
     bot.fail_channel = True

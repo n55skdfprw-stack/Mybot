@@ -5,12 +5,14 @@
 """
 
 import asyncio
+import json
 from datetime import date, datetime
 
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
-from aiogram.types import CallbackQuery, Chat, Message, Update, User
+from aiogram.types import CallbackQuery, Chat, Message, MessageOriginChannel, Update, User
 
+from alfred.core.backup_manager import BackupManager
 from alfred.handlers.telegram import build_dispatcher
 from alfred.ui import texts as T
 
@@ -18,11 +20,22 @@ from .test_access import OWNER, Checker, make, run
 
 
 class SlowLLM(Checker):
-    """GigaChat, который думает: пока он отвечает, может прийти следующее сообщение."""
+    """GigaChat, который думает: пока он отвечает, может прийти следующее сообщение.
+    Отвечает по тексту сообщения (а не по очереди): одновременные сообщения могут встать в очередь в любом порядке."""
     delay = 0.05
+
+    def __init__(self):
+        super().__init__()
+        self.by_text: dict[str, str] = {}
+
+    def on(self, text: str, **fields):
+        self.by_text[text] = json.dumps(fields, ensure_ascii=False)
 
     async def complete(self, system, user, pro=False):
         await asyncio.sleep(self.delay)
+        said = user.split("Сообщение пользователя: «", 1)[-1].split("»", 1)[0]
+        if said in self.by_text:
+            return self.by_text[said]
         return await super().complete(system, user, pro)
 
 
@@ -62,14 +75,15 @@ class FakeTelegram(BaseSession):
 class Chatroom:
     """Альфред целиком (как на Railway), но с подставными Telegram и GigaChat."""
 
-    def __init__(self, tmp_path, slow=False):
+    def __init__(self, tmp_path, slow=False, backup=False):
         self.access, self.admin, llm = make(tmp_path)
         if slow:
             self.access.brain.llm = llm = SlowLLM()
         self.llm = llm
         self.tg = FakeTelegram()
         self.bot = Bot(token="42:TEST", session=self.tg)
-        self.dp = build_dispatcher(self.access, self.admin)
+        self.backup = BackupManager(self.bot, self.access) if backup else None
+        self.dp = build_dispatcher(self.access, self.admin, self.backup)
         self._msg_id = 0
         self._upd_id = 0
 
@@ -78,10 +92,14 @@ class Chatroom:
         self._upd_id += 1
         return self._msg_id, self._upd_id
 
-    def message(self, text: str, user_id: int = OWNER, username: str = "owner") -> Update:
+    def message(self, text: str, user_id: int = OWNER, username: str = "owner", from_channel: int = 0) -> Update:
         mid, uid = self._ids()
+        origin = MessageOriginChannel(type="channel", date=datetime.now(), message_id=7,
+                                      chat=Chat(id=from_channel, type="channel", title="Мой канал")) \
+            if from_channel else None
         msg = Message(message_id=mid, date=datetime.now(), text=text, chat=Chat(id=user_id, type="private"),
-                      from_user=User(id=user_id, is_bot=False, first_name="Тест", username=username))
+                      from_user=User(id=user_id, is_bot=False, first_name="Тест", username=username),
+                      forward_origin=origin)
         return Update(update_id=uid, message=msg)
 
     def press(self, data: str, user_id: int = OWNER) -> Update:
@@ -140,8 +158,8 @@ def test_same_message_twice_is_handled_once(tmp_path):
 def test_two_quick_messages_do_not_mix(tmp_path):
     """Два сообщения подряд, не дожидаясь ответа: у первого дела дата не теряется."""
     room = Chatroom(tmp_path, slow=True)
-    room.llm.said(intent="CREATE_TASK", title="Купить молоко", due_when="завтра")
-    room.llm.said(intent="CREATE_TASK", title="Позвонить маме")
+    room.llm.on("Купить молоко завтра", intent="CREATE_TASK", title="Купить молоко", due_when="завтра")
+    room.llm.on("Позвонить маме", intent="CREATE_TASK", title="Позвонить маме")
     run(room.feed(room.message("Купить молоко завтра"), room.message("Позвонить маме")))
     tasks = {t.title: t.due_date for t in room.alfred.tasks.active()}
     assert tasks == {"Купить молоко": date(2026, 9, 25), "Позвонить маме": None}
@@ -149,11 +167,11 @@ def test_two_quick_messages_do_not_mix(tmp_path):
 
 def test_undo_after_two_quick_messages_cancels_only_last(tmp_path):
     room = Chatroom(tmp_path, slow=True)
-    room.llm.said(intent="CREATE_TASK", title="Купить молоко")
-    room.llm.said(intent="CREATE_TASK", title="Позвонить маме")
+    room.llm.on("Купить молоко", intent="CREATE_TASK", title="Купить молоко")
+    room.llm.on("Позвонить маме", intent="CREATE_TASK", title="Позвонить маме")
     run(room.feed(room.message("Купить молоко"), room.message("Позвонить маме")))
     room.say("Отмени последнее")
-    assert [t.title for t in room.alfred.tasks.active()] == ["Купить молоко"]
+    assert len(room.alfred.tasks.active()) == 1               # отменилось одно — то, что обработано последним
 
 
 # ---------------------------------------------------------------- длинные ответы
@@ -191,6 +209,43 @@ def test_old_choice_button_does_not_touch_new_question(tmp_path):
     run(room.feed(room.press(old)))
     assert any("неактуален" in t for t in room.tg.edited())
     assert len(room.alfred.tasks.active()) == 2 and len(room.alfred.notes.all()) == 2
+
+
+# ---------------------------------------------------------------- пересылка и удаление аккаунта
+
+CHANNEL = -100777
+
+
+def test_forward_from_channel_asks_and_can_be_just_a_message(tmp_path):
+    """Пересланный пост из канала: Альфред спрашивает, а не подключает канал сам. «Просто сообщение» — разбирает текст."""
+    room = Chatroom(tmp_path, backup=True)
+    run(room.feed(room.message("Купить хлеб", from_channel=CHANNEL)))
+    assert "Подключить этот канал" in room.tg.sent()[-1]
+    assert room.buttons() == ["fwd:backup", "fwd:text", "fwd:no"]
+    assert room.backup.channel is None                    # сам ничего не подключил
+    room.llm.said(intent="CREATE_TASK", title="Купить хлеб")
+    run(room.feed(room.press("fwd:text")))
+    assert [t.title for t in room.alfred.tasks.active()] == ["Купить хлеб"]
+    assert room.backup.channel is None
+
+
+def test_forward_from_channel_connect_on_yes(tmp_path):
+    room = Chatroom(tmp_path, backup=True)
+    run(room.feed(room.message("любой пост", from_channel=CHANNEL)))
+    run(room.feed(room.press("fwd:backup")))
+    assert room.backup.channel == CHANNEL
+    run(room.feed(room.press("fwd:backup")))              # старая кнопка ещё раз — ничего не ломает
+    assert any("неактуальна" in t for t in room.tg.edited())
+
+
+def test_guest_can_ask_to_delete_account_in_words(tmp_path):
+    """Живая ошибка: «Удали мой аккаунт» словами — Альфред молчал (принимал сообщение за дубль)."""
+    room = Chatroom(tmp_path)
+    room.access.users.add_invite("ivan_p")
+    guest = room.access.who(555, "ivan_p", "Иван").account
+    room.access.users.set_address(guest.id, "Сэр")
+    run(room.feed(room.message("Удали мой аккаунт", user_id=555, username="ivan_p")))
+    assert room.tg.sent()[-1] == T.DELETE_ME_ASK
 
 
 # ---------------------------------------------------------------- ошибки

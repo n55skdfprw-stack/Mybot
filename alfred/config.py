@@ -64,5 +64,5 @@ def _data_key() -> str:
         Fernet(key.encode())
     except Exception:
         raise RuntimeError("DATA_KEY задан неправильно: это должна быть строка из 44 символов, "
-                           "которую выдал Альфред (см. логи при запуске без ключа)")
+                           "из команды Fernet.generate_key() (см. подсказку в логах при запуске без ключа)")
     return key

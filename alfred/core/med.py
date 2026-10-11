@@ -332,8 +332,12 @@ class MedMixin:
             drug = self.med.drug(dose.drug_id) if dose else None
             if not dose or not drug:
                 return Reply("🎩 Сэр, это напоминание уже неактуально!", clear_source_buttons=True)
+            if action == "snooze" and dose.status in ("snoozed", "taken"):
+                # второе нажатие «Через 15 минут» не должно ставить второе напоминание
+                done = "уже отмечено, что вы приняли" if dose.status == "taken" else "уже напомню ещё раз про"
+                return Reply(f"🎩 Сэр, {done} {drug.name}!", edit=True)
             if action == "took":
-                self.med.took(dose)
+                self.med.took(dose, self.now())
                 return Reply(f"🎩 Отлично, Сэр!\n\n✅ {drug.name} — принято в {self.now():%H:%M}", edit=True)
             at = self.med.snooze(dose, self.now())
             return Reply(f"🎩 Хорошо, Сэр! Напомню про {drug.name} в {at:%H:%M}.", edit=True)

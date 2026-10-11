@@ -13,8 +13,9 @@
 Нужно: файл tools/live_check.env (образец — tools/live_check.env.example) и библиотека Telethon:
     pip install -r tools/requirements-live.txt
 
-⚠️ Файл tools/live_check.session — это ключ от вашего аккаунта Telegram. Никому его не отправляйте.
-   Он не попадает в GitHub (указан в .gitignore).
+⚠️ Файл live_check.session — это ключ от вашего аккаунта Telegram. Никому его не отправляйте.
+   Он лежит не в папке проекта (она в OneDrive), а в %LOCALAPPDATA%\\AlfredLiveCheck — не в облаке и не в GitHub.
+   Отозвать доступ: Telegram → Настройки → Устройства → завершить сеанс.
 """
 
 import asyncio
@@ -85,6 +86,13 @@ def load_env() -> dict:
     return env
 
 
+def session_path() -> Path:
+    """Ключ входа в Telegram храним вне папки проекта: она лежит в OneDrive и копируется в облако."""
+    base = Path(os.getenv("LOCALAPPDATA") or Path.home() / ".local" / "share") / "AlfredLiveCheck"
+    base.mkdir(parents=True, exist_ok=True)
+    return base / "live_check"
+
+
 async def ask(client, bot, text: str, ids: list[int]) -> str:
     """Отправить фразу и собрать все ответы Альфреда (он может ответить несколькими сообщениями)."""
     sent = await client.send_message(bot, text)
@@ -124,7 +132,7 @@ async def main() -> int:
     except ImportError:
         sys.exit("Нет библиотеки Telethon. Выполните: pip install -r tools/requirements-live.txt")
 
-    client = TelegramClient(str(HERE / "live_check"), int(env["API_ID"]), env["API_HASH"])
+    client = TelegramClient(str(session_path()), int(env["API_ID"]), env["API_HASH"])
     await client.start()                        # первый раз спросит телефон и код — вводите сами
     bot = await client.get_entity(env["BOT_USERNAME"].lstrip("@"))
     ids: list[int] = []

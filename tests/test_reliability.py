@@ -77,6 +77,20 @@ def test_undo_only_own_data(tmp_path):
     assert a.tasks.active() == [] and [t.title for t in guest.tasks.active()] == ["Дело гостя"]
 
 
+def test_undo_keeps_what_happened_after_the_command(tmp_path):
+    """«Отмени последнее» откатывает только последнюю команду. То, что случилось после неё само
+    (бот отметил напоминание отправленным, ночью продлил расписание), остаётся как есть."""
+    a, llm, _ = owner_alfred(tmp_path)
+    llm.said(intent="CREATE_TASK", title="Купить хлеб")
+    run(a.handle_text("Купить хлеб"))
+    llm.said(intent="CREATE_NOTE", content="Код 1234")
+    run(a.handle_text("Запиши код 1234"))
+    a.tasks.complete(a.tasks.active(), a.now())          # изменилось «само», без команды
+    run(a.handle_text("Отмени последнее"))
+    assert a.notes.all() == []                           # команда отменена
+    assert a.tasks.active() == []                        # а то, что было после неё, не откатилось
+
+
 def test_plain_cancel_hints_undo(tmp_path):
     a, llm, _ = owner_alfred(tmp_path)
     llm.said(intent="CREATE_TASK", title="Купить хлеб")

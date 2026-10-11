@@ -77,6 +77,7 @@ def build_router(access: Access, admin: Admin, backup=None) -> Router:
     router = Router()
     limiter = RateLimiter()
     seen = SeenOnce()
+    forwards: dict[int, tuple[int, str | None]] = {}   # пересланный пост из канала ждёт ответа: (канал, текст)
     # Только личные сообщения: в группах Альфред молчит.
     router.message.filter(F.chat.type == "private")
 
@@ -181,18 +182,17 @@ def build_router(access: Access, admin: Admin, backup=None) -> Router:
 
     @router.message(Command("deleteme"))
     async def on_delete_me(message: Message, bot: Bot):
-        await ask_delete_me(message, bot)
-
-    async def ask_delete_me(message: Message, bot: Bot):
         v = await gate(message, bot)
-        if not v:
-            return
+        if v:
+            await ask_delete_me(message.chat.id, bot, v)
+
+    async def ask_delete_me(chat_id: int, bot: Bot, v: Visitor):
         if v.kind == "owner":
-            await send_reply(bot, message.chat.id, Reply("🎩 Сэр, вы хозяин Альфреда — ваш аккаунт удалить нельзя. "
+            await send_reply(bot, chat_id, Reply("🎩 Сэр, вы хозяин Альфреда — ваш аккаунт удалить нельзя. "
                                                          "Чтобы стереть записи, есть «🧹 Чистый лист»."),
                              owner=True, address=v.account.address)
             return
-        await send_reply(bot, message.chat.id, Reply(T.DELETE_ME_ASK, buttons=[
+        await send_reply(bot, chat_id, Reply(T.DELETE_ME_ASK, buttons=[
             [("🗑 Да, удалить аккаунт", "me:delete")], [("↩️ Нет, оставить", "me:keep")]]),
                          address=v.account.address)
 
@@ -206,19 +206,30 @@ def build_router(access: Access, admin: Admin, backup=None) -> Router:
 
     @router.message(F.forward_origin)
     async def on_forward(message: Message, bot: Bot):
-        """Владелец переслал сообщение из канала — подключаем канал для резервных копий."""
+        """Пересланное сообщение. Если владелец переслал пост из канала — спрашиваем: подключить канал
+        для резервных копий или разобрать текст как обычное сообщение (сами ничего не подключаем)."""
         v = await gate(message, bot)
         if not v:
             return
         origin = message.forward_origin
-        if v.kind == "owner" and backup and getattr(origin, "type", "") == "channel":
-            reply = await backup.connect(origin.chat.id)
-            await send_reply(bot, message.chat.id, reply, owner=True, address=v.account.address)
+        text = message.text or message.caption
+        if v.kind == "owner" and backup and getattr(origin, "type", "") == "channel" \
+                and origin.chat.id != backup.channel:
+            forwards[v.account.id] = (origin.chat.id, text)
+            rows = [[("📁 Да, для резервных копий", "fwd:backup")]]
+            if text:
+                rows.append([("📝 Нет, это просто сообщение", "fwd:text")])
+            rows.append([("↩️ Отмена", "fwd:no")])
+            title = origin.chat.title or "без названия"
+            await send_reply(bot, message.chat.id, Reply(
+                f"🎩 Сэр, это сообщение из канала «{title}»!\n\nПодключить этот канал для резервных копий? "
+                "Каждую ночь я буду класть туда копию базы. Прежние сообщения канала я не трогаю.", buttons=rows),
+                owner=True, address=v.account.address)
             return
-        if message.text:
+        if text:
             # сразу к разбору текста: повторный вход через on_text принял бы сообщение за дубль и промолчал
             async with access.lock(v.account.id):
-                await handle_text(message, bot, v)
+                await handle_text(text, message.chat.id, bot, v)
 
     @router.message(F.document)
     async def on_document(message: Message, bot: Bot):
@@ -240,44 +251,43 @@ def build_router(access: Access, admin: Admin, backup=None) -> Router:
         if not v:
             return
         async with access.lock(v.account.id):        # сообщения одного человека — строго по очереди
-            await handle_text(message, bot, v)
+            await handle_text(message.text, message.chat.id, bot, v)
 
-    async def handle_text(message: Message, bot: Bot, v: Visitor):
+    async def handle_text(text: str, chat_id: int, bot: Bot, v: Visitor):
         owner = v.kind == "owner"
-        if is_word(message.text, T.PRIVACY_WORDS):
-            await send_reply(bot, message.chat.id, Reply(T.PRIVACY), owner=owner, address=v.account.address)
+        if is_word(text, T.PRIVACY_WORDS):
+            await send_reply(bot, chat_id, Reply(T.PRIVACY), owner=owner, address=v.account.address)
             return
-        if is_word(message.text, T.DELETE_ME_WORDS):
-            await ask_delete_me(message, bot)
+        if is_word(text, T.DELETE_ME_WORDS):
+            await ask_delete_me(chat_id, bot, v)
             return
-        addr = asked_address(message.text)
+        addr = asked_address(text)
         if addr:
             access.users.set_address(v.account.id, addr)
-            await send_reply(bot, message.chat.id, Reply(f"🎩 Как скажете, {addr}!"), owner=owner, address=addr)
+            await send_reply(bot, chat_id, Reply(f"🎩 Как скажете, {addr}!"), owner=owner, address=addr)
             return
         if owner and backup and re.fullmatch(
                 r"\s*(?:альфред,?\s*)?(?:резерв|бэкап|backup|резервн\w*\s+копи\w*|проверка\s+резерва|"
-                r"(?:сделай|создай|сними)\s+(?:резервную\s+)?копию)[\s.!?]*", message.text.lower()):
+                r"(?:сделай|создай|сними)\s+(?:резервную\s+)?копию)[\s.!?]*", text.lower()):
             # «Резерв», «Сделай копию», «Проверка резерва» — открываем 📁 Резерв, а не гадаем через ИИ
-            wants_now = re.search(r"сделай|создай|сними", message.text.lower())
-            reply = await backup.callback("bk:now" if wants_now else "bk:view", message.chat.id)
+            wants_now = re.search(r"сделай|создай|сними", text.lower())
+            reply = await backup.callback("bk:now" if wants_now else "bk:view", chat_id)
             reply = replace(reply, edit=False)
-            await send_reply(bot, message.chat.id, reply, owner=True, address=v.account.address)
+            await send_reply(bot, chat_id, reply, owner=True, address=v.account.address)
             return
         if owner:
-            menu = T.menu_guess(message.text, owner=True)
-            if message.text == T.MENU_SYSTEM or menu == T.MENU_SYSTEM:
-                await bot.send_chat_action(message.chat.id, "typing")
-                await send_reply(bot, message.chat.id, await admin.system_view(), owner=True,
-                                 address=v.account.address)
+            menu = T.menu_guess(text, owner=True)
+            if text == T.MENU_SYSTEM or menu == T.MENU_SYSTEM:
+                await bot.send_chat_action(chat_id, "typing")
+                await send_reply(bot, chat_id, await admin.system_view(), owner=True, address=v.account.address)
                 return
-            reply = admin.command(menu if menu == T.MENU_USERS else message.text)
+            reply = admin.command(menu if menu == T.MENU_USERS else text)
             if reply:
-                await send_reply(bot, message.chat.id, reply, owner=True, address=v.account.address)
+                await send_reply(bot, chat_id, reply, owner=True, address=v.account.address)
                 return
-        await bot.send_chat_action(message.chat.id, "typing")
-        reply = await access.alfred_for(v.account).handle_text(message.text)
-        await send_reply(bot, message.chat.id, reply, owner=owner, address=v.account.address)
+        await bot.send_chat_action(chat_id, "typing")
+        reply = await access.alfred_for(v.account).handle_text(text)
+        await send_reply(bot, chat_id, reply, owner=owner, address=v.account.address)
 
     @router.message()
     async def on_other(message: Message, bot: Bot):
@@ -349,6 +359,33 @@ def build_router(access: Access, admin: Admin, backup=None) -> Router:
                     pass
             intro = T.INTRO.format(addr=addr) + ("" if owner else T.INTRO_LIMIT.format(limit=access.limit_of(v.account)))
             await bot.send_message(callback.from_user.id, intro, reply_markup=main_menu(owner))
+            return
+        if data.startswith("fwd:"):
+            await callback.answer()
+            channel, text = forwards.pop(v.account.id, (None, None)) if owner else (None, None)
+            msg = callback.message
+            if data == "fwd:text" and text:
+                if msg:
+                    try:
+                        await msg.edit_reply_markup(reply_markup=None)
+                    except TelegramBadRequest:
+                        pass
+                await handle_text(text, callback.from_user.id, bot, v)
+                return
+            if data == "fwd:backup" and channel and backup:
+                result = await backup.connect(channel)
+            elif data == "fwd:no" and channel:
+                result = Reply("🎩 Как скажете, Сэр! Ничего не подключаю.")
+            else:
+                result = Reply("🎩 Сэр, эта кнопка уже неактуальна!")
+            result = personalize(result, v.account.address)
+            try:
+                if msg:
+                    await msg.edit_text(result.text)
+                    return
+            except TelegramBadRequest:
+                pass
+            await send_reply(bot, callback.from_user.id, result, owner=owner, address=v.account.address)
             return
         if data.startswith("bk:"):
             if not owner or not backup:

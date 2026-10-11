@@ -14,6 +14,8 @@ DEFAULT_TIMES = {1: ["09:00"], 2: ["09:00", "21:00"], 3: ["08:00", "14:00", "20:
 WORD_NUM = {"один": 1, "одну": 1, "одна": 1, "два": 2, "две": 2, "три": 3, "четыре": 4, "пять": 5, "шесть": 6}
 GRACE = timedelta(minutes=15)   # если бот был выключен — напоминаем, только если опоздали не больше чем на 15 мин
 SNOOZE = timedelta(minutes=15)
+LATE = timedelta(hours=1)       # отложенное или не ушедшее напоминание старше часа уже не шлём (бот спал, человек
+                                # заблокировал бота) — иначе оно повторялось бы каждую минуту или пришло через полдня
 
 
 def _n(s: str) -> Optional[int]:
@@ -227,6 +229,9 @@ class MedService:
                         dose_id = self.repo.add_dose(self.user_id, d.id, due_at, "sent")
                         out.append((self.repo.dose(self.user_id, dose_id), d, case))
         for dose in self.repo.pending_doses(self.user_id, now):
+            if now - dose.due_at > LATE:
+                self.repo.set_dose(self.user_id, dose.id, "missed")
+                continue
             drug = self.drug(dose.drug_id)
             case = self.case(drug.case_id) if drug else None
             self.repo.set_dose(self.user_id, dose.id, "sent")
@@ -237,8 +242,12 @@ class MedService:
     def dose(self, dose_id: int) -> Optional[Dose]:
         return self.repo.dose(self.user_id, dose_id)
 
-    def took(self, dose: Dose) -> None:
+    def took(self, dose: Dose, now: datetime) -> None:
         self.repo.set_dose(self.user_id, dose.id, "taken")
+        # «Через 15 минут», а потом всё-таки «Принял» — отложенное напоминание больше не нужно
+        for p in self.repo.pending_doses(self.user_id, now + SNOOZE):
+            if p.drug_id == dose.drug_id:
+                self.repo.set_dose(self.user_id, p.id, "cancelled")
 
     def snooze(self, dose: Dose, now: datetime) -> datetime:
         self.repo.set_dose(self.user_id, dose.id, "snoozed")

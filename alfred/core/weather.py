@@ -3,7 +3,7 @@
 import re
 from datetime import timedelta
 from typing import Optional
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..brain.dates import find_dates
 from ..brain.parser import BrainResult
@@ -130,7 +130,8 @@ class WeatherMixin:
         city = (r.city or "").strip()
         if not city or city.upper() == "HOME" or HOME_WORDS.search(said) or HOME_WORDS.search(city.lower()):
             self.users.set_city(self.user_id, None)
-            return Reply(f"🎩 С возвращением, Сэр!\n\n📍 Погода снова для: {HOME}")
+            clock = self._move_clock(SPB.timezone)
+            return Reply(f"🎩 С возвращением, Сэр!\n\n📍 Погода снова для: {HOME}{clock}")
         try:
             place = await self._place(city)
         except WeatherUnavailable:
@@ -138,8 +139,23 @@ class WeatherMixin:
         if not place:
             return Reply(f"🎩 Сэр, не нашёл город «{city}»!")
         self.users.set_city(self.user_id, place.name)
-        return Reply(f"🎩 Как скажете, Сэр!\n\n📍 Теперь погода и утренняя сводка — для: {place.name}\n"
+        clock = self._move_clock(place.timezone)
+        return Reply(f"🎩 Как скажете, Сэр!\n\n📍 Теперь погода и утренняя сводка — для: {place.name}{clock}\n"
                      "Когда вернётесь, напишите «Я дома».")
+
+    def _move_clock(self, timezone: str) -> str:
+        """Переводим часы Альфреда на местное время города. Возвращает строку для ответа (или пусто)."""
+        try:
+            tz = ZoneInfo(timezone)
+        except (ZoneInfoNotFoundError, ValueError):
+            return ""
+        before = self.now()
+        self.users.set_timezone(self.user_id, timezone)
+        self.tz = tz
+        after = self.now()
+        if before.utcoffset() == after.utcoffset():
+            return ""
+        return f"\n🕐 Перевёл часы на местное время ({after:%H:%M}): сводки и напоминания — по нему."
 
     async def _time_in_city(self, r: BrainResult) -> Reply:
         if not r.city:

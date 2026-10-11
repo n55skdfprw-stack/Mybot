@@ -53,6 +53,45 @@ def test_reminders_took_and_snooze(tmp_path):
     assert r3.text == "🎩 Отлично, Сэр!\n\n✅ Амоксициллин — принято в 14:15"
 
 
+def test_snooze_twice_gives_one_reminder(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, TEXT, intent="MED_CASE", med=ANGINA)
+    clock(a, date(2026, 9, 24), 14, 0)
+    [r] = a.collect_med_reminders()
+    snooze = r.buttons[0][1][1]
+    a.handle_callback(snooze)
+    second = a.handle_callback(snooze)                     # нажал ещё раз
+    assert "уже напомню" in second.text
+    clock(a, date(2026, 9, 24), 14, 15)
+    assert len(a.collect_med_reminders()) == 1             # одно напоминание, а не два
+
+
+def test_took_after_snooze_cancels_the_snoozed_reminder(tmp_path):
+    a, llm = make(tmp_path)
+    say(a, llm, TEXT, intent="MED_CASE", med=ANGINA)
+    clock(a, date(2026, 9, 24), 14, 0)
+    [r] = a.collect_med_reminders()
+    a.handle_callback(r.buttons[0][1][1])                  # ⏰ Через 15 минут
+    a.handle_callback(r.buttons[0][0][1])                  # …а потом всё-таки ✅ Принял
+    clock(a, date(2026, 9, 24), 14, 15)
+    assert a.collect_med_reminders() == []
+
+
+def test_snoozed_reminder_is_dropped_when_too_late(tmp_path):
+    """Отложил, а бот был выключен (или человек заблокировал бота) — через полдня не напоминаем
+    и не пытаемся каждую минуту бесконечно."""
+    a, llm = make(tmp_path)
+    say(a, llm, TEXT, intent="MED_CASE", med=ANGINA)
+    clock(a, date(2026, 9, 24), 14, 0)
+    [r] = a.collect_med_reminders()
+    a.handle_callback(r.buttons[0][1][1])
+    clock(a, date(2026, 9, 24), 17, 0)
+    assert a.collect_med_reminders() == []
+    a.med_send_failed(r)                                   # не ушло — вернули в очередь…
+    clock(a, date(2026, 9, 24), 17, 1)
+    assert a.collect_med_reminders() == []                 # …но оно давно опоздало — больше не шлём
+
+
 def test_reminders_stop_after_course_and_when_late(tmp_path):
     a, llm = make(tmp_path)
     say(a, llm, TEXT, intent="MED_CASE", med=ANGINA)

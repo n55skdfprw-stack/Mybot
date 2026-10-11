@@ -8,7 +8,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Optional
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..brain.brain import Brain
 from ..database.db import Database
@@ -92,7 +92,7 @@ class Access:
                 schedule=ScheduleService(EventRepository(db), RuleRepository(db), NotificationRepository(db), uid),
                 context=ContextRepository(db),
                 user_id=uid,
-                tz=self.tz,
+                tz=self._tz_of(acc),
                 clock=self.clock,
                 currency=self.currency,
                 weather=self.weather,
@@ -100,6 +100,14 @@ class Access:
             a.quota = self._quota(acc.id, a)
             self._alfreds[acc.id] = a
         return a
+
+    def _tz_of(self, acc: Account) -> ZoneInfo:
+        """Часовой пояс человека: по городу, где он сейчас. Непонятный — московский (как у Альфреда)."""
+        try:
+            return ZoneInfo(acc.timezone)
+        except (ZoneInfoNotFoundError, ValueError):
+            log.warning("Неизвестный часовой пояс %r у пользователя %s", acc.timezone, acc.id)
+            return self.tz
 
     def lock(self, user_id: int) -> asyncio.Lock:
         """Очередь одного человека: его сообщения, кнопки и напоминания выполняются по одному, а не вперемешку

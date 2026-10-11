@@ -70,6 +70,7 @@ class Account:
     created_at: str
     address: Optional[str] = None
     paused: bool = False
+    timezone: str = "Europe/Moscow"     # часовой пояс города, где человек сейчас («Я в Новосибирске»)
 
     @property
     def unlimited(self) -> bool:
@@ -82,7 +83,8 @@ class Account:
 
 def _account(r) -> Account:
     return Account(r["id"], r["telegram_id"], r["username"], r["display_name"], r["role"], r["status"],
-                   r["ai_limit"], r["last_seen"], r["created_at"], r["address"], bool(r["paused"]))
+                   r["ai_limit"], r["last_seen"], r["created_at"], r["address"], bool(r["paused"]),
+                   r["timezone"] or "Europe/Moscow")
 
 
 def clean_username(name: Optional[str]) -> Optional[str]:
@@ -219,6 +221,10 @@ class UserRepository:
         with self.db.connect() as conn:
             conn.execute("UPDATE users SET current_city=COALESCE(?, home_city), updated_at=? WHERE id=?",
                          (city, _now(), user_id))
+
+    def set_timezone(self, user_id: int, timezone: str) -> None:
+        with self.db.connect() as conn:
+            conn.execute("UPDATE users SET timezone=?, updated_at=? WHERE id=?", (timezone, _now(), user_id))
 
 
 class TaskRepository:

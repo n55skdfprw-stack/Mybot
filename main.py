@@ -32,10 +32,11 @@ async def main() -> None:
         n = db.encrypt_existing()
         log.info("🔐 Шифрование базы включено%s", f" (зашифровал старых записей: {n})" if n else "")
     else:
-        from alfred.database.crypto import new_key
-        log.warning("🔓 Шифрование базы ВЫКЛЮЧЕНО. Чтобы включить, добавьте в Railway переменную DATA_KEY "
-                    "со значением: %s  — и сохраните этот ключ в надёжном месте: без него записи не прочитать.",
-                    new_key())
+        # Сам ключ в логи не пишем: логи хранятся долго, а ключ — секрет (только в Railway → Variables).
+        log.warning("🔓 Шифрование базы ВЫКЛЮЧЕНО. Чтобы включить: на своём компьютере выполните "
+                    "python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\" "
+                    "и добавьте результат в Railway → Variables как DATA_KEY. Сохраните ключ в надёжном месте: "
+                    "без него записи не прочитать.")
 
     llm = GigaChatClient(config.gigachat_key, config.gigachat_model, config.gigachat_model_pro)
     if await llm.check():

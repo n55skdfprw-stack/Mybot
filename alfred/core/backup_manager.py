@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 SETUP = ("📁 Как подключить папку для копий (один раз):\n"
          "1. Telegram → новый канал, например «Альфред · Резерв», тип — Частный.\n"
          "2. Настройки канала → Администраторы → добавьте Альфреда (права: публиковать и удалять сообщения).\n"
-         "3. Перешлите сюда любое сообщение из этого канала — я подключу его сам.")
+         "3. Перешлите сюда любое сообщение из этого канала и нажмите «📁 Да, для резервных копий».")
 
 
 class BackupManager:
@@ -97,7 +97,12 @@ class BackupManager:
         if not kept:
             return
         oldest = min(c["msg"] for c in kept)
-        ids = list(range(max(1, oldest - 300), oldest))
+        # Только сообщения, появившиеся после подключения канала: прежние посты владельца не трогаем.
+        since = self.users.setting("backup_since")
+        if not since:                       # канал подключён старой версией — считаем началом самую старую копию
+            since = str(oldest)
+            self.users.set_setting("backup_since", since)
+        ids = list(range(max(1, oldest - 300, int(since)), oldest))
         for start in range(0, len(ids), 100):          # Telegram удаляет до 100 за раз, несуществующие пропускает
             try:
                 await self.bot.delete_messages(self.channel, ids[start:start + 100])
@@ -113,6 +118,7 @@ class BackupManager:
             return Reply("🎩 Сэр, я не могу писать или удалять сообщения в этом канале!\n\n"
                          "Добавьте меня в администраторы канала с правами «публиковать» и «удалять сообщения».")
         self.users.set_setting("backup_channel", str(chat_id))
+        self.users.set_setting("backup_since", str(probe.message_id))   # всё, что раньше, — не наше
         self._save_copies([])
         err = await self.run()
         if err:
@@ -189,7 +195,8 @@ class BackupManager:
             self._restore = None
             # Настройки резерва (канал и список копий) — НЕ из копии, а текущие: иначе после восстановления
             # Альфред «забудет» свежие файлы в канале и перестанет их удалять.
-            keep = {k: self.users.setting(k) for k in ("backup_channel", "backup_copies", "backup_error")}
+            keep = {k: self.users.setting(k) for k in ("backup_channel", "backup_copies", "backup_error",
+                                                       "backup_since")}
             restore_backup(self.access.db, raw)
             for k, v in keep.items():
                 self.users.set_setting(k, v)

@@ -162,9 +162,10 @@ class MedRepository:
 
     def pending_doses(self, user_id: int, until: datetime) -> list[Dose]:
         with self.db.connect() as conn:
-            rows = conn.execute("SELECT * FROM med_doses WHERE user_id=? AND status='pending' AND due_at<=?",
-                                (user_id, until.isoformat())).fetchall()
-        return [Dose(r["id"], r["drug_id"], datetime.fromisoformat(r["due_at"]), r["status"]) for r in rows]
+            rows = conn.execute("SELECT * FROM med_doses WHERE user_id=? AND status='pending'", (user_id,)).fetchall()
+        doses = [Dose(r["id"], r["drug_id"], datetime.fromisoformat(r["due_at"]), r["status"]) for r in rows]
+        # сравниваем как время, а не как текст: у записей может быть разный часовой пояс (человек переехал)
+        return [d for d in doses if (d.due_at if d.due_at.tzinfo else d.due_at.replace(tzinfo=until.tzinfo)) <= until]
 
     def set_dose(self, user_id: int, dose_id: int, status: str) -> None:
         with self.db.connect() as conn:
