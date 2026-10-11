@@ -1,18 +1,20 @@
 """Связь Telegram ↔ ядро Альфреда. Здесь нет бизнес-логики — только доступ и отправка сообщений."""
 
+import asyncio
 import logging
 import re
 from dataclasses import replace
 
 from aiogram import Bot, Dispatcher, F, Router
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import (TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter,
+                                TelegramServerError)
 from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove, User
 
 from ..core.access import Access, Visitor
 from ..core.admin import Admin
 from ..core.reply import Reply
-from ..core.security import MAX_TEXT, RateLimiter
+from ..core.security import MAX_TEXT, RateLimiter, SeenOnce
 from ..services import search
 from ..ui import texts as T
 from ..ui.address import MAM, SIR, asked_address, personalize
@@ -21,19 +23,35 @@ from ..ui.keyboards import inline, main_menu
 log = logging.getLogger(__name__)
 
 
+async def send_with_retry(bot: Bot, chat_id: int, text: str, **kw):
+    """Отправка с повторами: если Telegram на секунду не ответил или просит подождать — пробуем ещё раз."""
+    for attempt in range(3):
+        try:
+            return await bot.send_message(chat_id, text, **kw)
+        except TelegramRetryAfter as e:
+            if attempt == 2:
+                raise
+            await asyncio.sleep(min(e.retry_after, 30))
+        except (TelegramNetworkError, TelegramServerError):
+            if attempt == 2:
+                raise
+            await asyncio.sleep(1 + attempt * 2)
+
+
 async def send_reply(bot: Bot, chat_id: int, reply: Reply, owner: bool = False,
                      address: str | None = None) -> None:
     reply = personalize(reply, address)
     markup = inline(reply.buttons) or main_menu(owner)
-    await bot.send_message(chat_id, reply.text, reply_markup=markup, protect_content=reply.protect)
+    await send_with_retry(bot, chat_id, reply.text, reply_markup=markup, protect_content=reply.protect)
     for extra in reply.extra:
-        await bot.send_message(chat_id, extra.text, reply_markup=inline(extra.buttons) or main_menu(owner),
-                               protect_content=extra.protect)
+        await send_with_retry(bot, chat_id, extra.text, reply_markup=inline(extra.buttons) or main_menu(owner),
+                              protect_content=extra.protect)
 
 
 def build_router(access: Access, admin: Admin, backup=None) -> Router:
     router = Router()
     limiter = RateLimiter()
+    seen = SeenOnce()
     # Только личные сообщения: в группах Альфред молчит.
     router.message.filter(F.chat.type == "private")
 
@@ -51,6 +69,8 @@ def build_router(access: Access, admin: Admin, backup=None) -> Router:
         При первом знакомстве сначала спрашиваем, как обращаться: «Сэр» или «Мэм»."""
         if message.from_user is None or message.from_user.is_bot:
             return None
+        if not seen.first_time(("m", message.chat.id, message.message_id)):
+            return None                              # то же самое сообщение пришло второй раз — пропускаем
         v = visitor(message.from_user)
         if v.kind in ("stranger", "blocked"):
             if limiter.stranger_may_get_reply(message.from_user.id):
@@ -236,6 +256,8 @@ def build_router(access: Access, admin: Admin, backup=None) -> Router:
 
     @router.callback_query()
     async def on_callback(callback: CallbackQuery, bot: Bot):
+        if not seen.first_time(("c", callback.id)):
+            return                                   # то же нажатие пришло второй раз
         v = visitor(callback.from_user)
         if v.kind not in ("owner", "user", "new"):
             await callback.answer("Доступ закрыт")

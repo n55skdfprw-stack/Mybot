@@ -58,3 +58,22 @@ class RateLimiter:
         if len(self._stranger) > 5000:                  # не копим память бесконечно
             self._stranger = {k: v for k, v in self._stranger.items() if now - v < STRANGER_REPLY_EVERY}
         return True
+
+
+class SeenOnce:
+    """Telegram иногда присылает одно и то же сообщение или нажатие дважды (сбой сети, перезапуск).
+    Запоминаем последние и второй раз не обрабатываем — чтобы расход не записался дважды."""
+
+    def __init__(self, size: int = 5000):
+        self.size = size
+        self._order: deque = deque()
+        self._set: set = set()
+
+    def first_time(self, key) -> bool:
+        if key in self._set:
+            return False
+        self._set.add(key)
+        self._order.append(key)
+        if len(self._order) > self.size:
+            self._set.discard(self._order.popleft())
+        return True

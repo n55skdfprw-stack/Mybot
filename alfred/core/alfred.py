@@ -23,6 +23,7 @@ from ..services.tasks import DuplicateError, TaskService, VerificationError
 from ..ui import schedule_texts as S
 from ..ui import texts as T
 from .reply import Reply
+from ..database import undo as undo_db
 from ..database.finance_repo import DebtRepository, OperationRepository, PeopleRepository
 from ..services.currency import CurrencyService
 from ..services.finance import DebtService, FinanceService
@@ -36,6 +37,8 @@ SWAP_RE = re.compile(r"^(?:поменяй|исправь|замени|измен
 PREPS = ("с", "со", "у", "к", "ко", "в", "во", "на", "для", "про", "о", "об", "от", "до", "за")
 NOTES_HINT_RE = re.compile(r"замет|запис|удали|убери|измени|поменяй|исправ|замени|допиш|добав|перепиш|найди|"
                            r"покажи|где\s|что\s+я|сотри|вычеркни|обнови")
+UNDO_RE = re.compile(r"(?:альфред,?\s*)?(?:отмени\s+(?:последнее(?:\s+действие)?|последнюю\s+операцию|это)|"
+                     r"верни\s+(?:всё\s+|все\s+)?как\s+было|undo|/undo|↩️\s*отменить\s+последнее)[\s.!]*")
 HELP_RE = re.compile(r"^(?:/help|помощь|справка)$|что\s+ты\s+(?:умеешь|можешь)|что\s+умеешь|твои\s+(?:функции|возможности)|"
                      r"как\s+(?:тобой|с\s+тобой)\s+пользоваться|что\s+ты\s+за\s+бот|расскажи\s+о\s+себе")
 from .med import MED_INTENTS, MedMixin
@@ -213,12 +216,53 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
             return self.medcard_view()
         return Reply(T.SECTION_NOT_READY)
 
+    # ------------------------------------------------------------------ ↩️ отмена последнего действия
+    def _snap(self):
+        try:
+            return undo_db.snapshot(self.schedule.events.db.path, self.user_id)
+        except sqlite3.Error:
+            log.exception("Undo snapshot failed")
+            return None
+
+    def _remember_change(self, before, label: str) -> None:
+        """Если команда что-то поменяла — запоминаем, как было до неё (одна последняя точка отмены)."""
+        if before is None:
+            return
+        after = self._snap()
+        if after is not None and not undo_db.same(before, after):
+            self._undo_point = (before, label)
+
+    def undo(self) -> Reply:
+        point = getattr(self, "_undo_point", None)
+        if not point:
+            return Reply("🎩 Сэр, отменять пока нечего!")
+        before, label = point
+        self._undo_point = None
+        undo_db.restore(self.schedule.events.db.path, self.user_id, before)
+        self._clear_pending()
+        self._set_last("task", None)
+        return Reply(f"🎩 Сэр, последняя операция отменена!\n\n↩️ {label}")
+
     async def handle_text(self, text: str) -> Reply:
+        if UNDO_RE.fullmatch(search.normalize(text).strip()):
+            return self.undo()
+        before = self._snap()
+        reply = await self._handle_text(text)
+        short = text.strip() if len(text.strip()) <= 60 else text.strip()[:59] + "…"
+        self._remember_change(before, f"Отменил: «{short}»")
+        return reply
+
+    async def _handle_text(self, text: str) -> Reply:
         text = text.strip()
         self._message = text
         self._raw_text = text  # ровно то, что написал пользователь, без подстановок ИИ
         if search.normalize(text).strip(" .!") in T.CANCEL_WORDS:
-            return Reply(T.CANCELLED if self._clear_pending() else T.NOTHING_TO_CANCEL)
+            if self._clear_pending():
+                return Reply(T.CANCELLED)
+            if getattr(self, "_undo_point", None):
+                return Reply("🎩 Сэр, сейчас я ничего не жду. Если нужно отменить последнее действие — "
+                             "напишите «Отмени последнее».")
+            return Reply(T.NOTHING_TO_CANCEL)
         if re.fullmatch(r"(?:🧹\s*)?чистый лист[.!]*", search.normalize(text).strip()):
             return self.reset_request()
         if text == T.MENU_WEATHER:
@@ -309,6 +353,12 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
             return Reply(T.DB_ERROR)
 
     def handle_callback(self, data: str) -> Reply:
+        before = self._snap()
+        reply = self._handle_callback(data)
+        self._remember_change(before, "Отменил последнее нажатие кнопки")
+        return reply
+
+    def _handle_callback(self, data: str) -> Reply:
         try:
             return self._callback(data)
         except (VerificationError, sqlite3.Error):

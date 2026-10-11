@@ -15,6 +15,7 @@ class Reply:
     toast: Optional[str] = None         # короткое всплывающее уведомление при нажатии кнопки
     extra: list = field(default_factory=list)  # дополнительные сообщения после основного
     protect: bool = False               # запретить пересылку и сохранение (медкарта, досье)
+    ref: Optional[str] = None           # служебная метка (например, «dose:15» — какой приём лекарства)
 
 
 @dataclass

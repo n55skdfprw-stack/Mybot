@@ -347,5 +347,10 @@ class MedMixin:
         out = []
         for dose, drug, case in self.med.due(self.now()):
             rows = [[("✅ Принял", f"med:took:{dose.id}"), ("⏰ Через 15 минут", f"med:snooze:{dose.id}")]]
-            out.append(Reply(M.reminder(drug, case, self.today()), buttons=rows))
+            out.append(Reply(M.reminder(drug, case, self.today()), buttons=rows, ref=f"dose:{dose.id}"))
         return out
+
+    def med_send_failed(self, reply: Reply) -> None:
+        """Напоминание о лекарстве не ушло (Telegram не ответил) — через минуту попробуем снова."""
+        if reply.ref and reply.ref.startswith("dose:"):
+            self.med.repo.set_dose(self.user_id, int(reply.ref[5:]), "pending")

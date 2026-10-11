@@ -56,14 +56,23 @@ def build_scheduler(bot: Bot, access: Access, backup=None) -> AsyncIOScheduler:
                 if reply is None:
                     alfred.mark_reminder(notif_id, sent=False)
                     continue
-                await send(acc, reply)
+                try:
+                    await send(acc, reply)
+                except Exception:
+                    # не отмечаем как отправленное — через минуту попробуем ещё раз (пока не опоздали)
+                    log.warning("Напоминание %s не ушло, повторю через минуту", notif_id)
+                    continue
                 alfred.mark_reminder(notif_id, sent=True)
         await each("reminders", job)
 
     async def run_med():
         async def job(acc, alfred):
             for reply in alfred.collect_med_reminders():
-                await send(acc, reply)
+                try:
+                    await send(acc, reply)
+                except Exception:
+                    log.warning("Напоминание о лекарстве не ушло, повторю через минуту")
+                    alfred.med_send_failed(reply)
         await each("med reminders", job)
 
     async def run_tomorrow():
