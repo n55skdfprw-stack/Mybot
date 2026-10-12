@@ -211,6 +211,21 @@ def build_router(access: Access, admin: Admin, backup=None) -> Router:
         background.add(task)
         task.add_done_callback(background.discard)
 
+    def restore_lessons(bot: Bot, v: Visitor) -> None:
+        """После «Чистого листа» — сразу забрать пары с сайта вуза. Идёт в фоне, после ответа «Всё очищено»."""
+        async def go():
+            try:
+                async with access.lock(v.account.id):
+                    reply = await sync_and_report(access.alfred_for(v.account), access.university, access.users,
+                                                  manual=True)
+                if reply:
+                    await send_reply(bot, access.owner_tg, reply, owner=True, address=v.account.address)
+            except Exception:
+                log.exception("Не удалось подгрузить пары после «Чистого листа»")
+        task = asyncio.create_task(go())
+        background.add(task)
+        task.add_done_callback(background.discard)
+
     @router.message(Command("deleteme"))
     async def on_delete_me(message: Message, bot: Bot):
         v = await gate(message, bot)
@@ -465,6 +480,8 @@ def build_router(access: Access, admin: Admin, backup=None) -> Router:
                         log.exception("Не удалось предупредить %s о техработах", guest.label)
         else:
             reply = await access.alfred_for(v.account).handle_callback_async(data)
+            if data == "confirm:reset_all" and owner and access.university and reply.text.startswith(T.RESET_DONE):
+                restore_lessons(bot, v)               # «Чистый лист» стёр и пары — сразу подгружаем их заново
         reply = personalize(reply, v.account.address)
         await callback.answer(reply.toast or None)
         msg = callback.message

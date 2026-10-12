@@ -72,6 +72,7 @@ def _source(values: dict) -> dict:
 @dataclass
 class SyncResult:
     first: bool = False
+    restored: bool = False         # пары были стёрты («Чистый лист», восстановление копии) — загрузили заново
     added: list[dict] = field(default_factory=list)
     changed: list[tuple[dict, dict]] = field(default_factory=list)     # (было, стало)
     removed: list[dict] = field(default_factory=list)
@@ -117,14 +118,24 @@ class UniversitySync:
         known = self._known()
         result = SyncResult(first=known is None)
         known = known or {}
-        mine = {e.external_id: e for e in a.schedule.between(today - timedelta(days=1), end + timedelta(days=7))
-                if e.external_id and e.external_id.startswith(PREFIX)}
+        mine: dict[str, Event] = {}
+        twins: list[Event] = []
+        for e in a.schedule.between(today - timedelta(days=1), end + timedelta(days=7)):
+            if e.external_id and e.external_id.startswith(PREFIX):
+                if e.external_id in mine:
+                    twins.append(e)
+                else:
+                    mine[e.external_id] = e
+        if twins:
+            # одна пара записана дважды (например, «Отмени последнее» после «Чистого листа») — лишнюю убираем
+            a.schedule.delete(twins, now)
         future_known = [k for k, v in known.items() if v["date"] >= today.isoformat()]
         if not lessons and len(future_known) >= 5:
             log.warning("Сайт вуза вернул пустое расписание — ничего не удаляю (возможен сбой сайта)")
             return SyncResult(error="unavailable")
         # «Чистый лист» или восстановление базы стёрли все пары — значит, это не «человек удалил сам»
         wiped = bool(future_known) and not any(k in mine for k in future_known)
+        result.restored = wiped
 
         for ext, v in lessons.items():
             ev = mine.get(ext)
@@ -139,7 +150,7 @@ class UniversitySync:
                 continue                                   # человек удалил пару сам — не навязываем
             else:
                 old, new = known[ext], _source(v)
-                # поля, которых Альфред раньше не запоминал (номер пары появился в 8.32), — дописываем молча
+                # поля, которых Альфред раньше не запоминал (номер пары появился в 8.33), — дописываем молча
                 quiet = {k: val for k, val in new.items() if k not in old and ev.as_values().get(k) != val}
                 changes = {k: val for k, val in new.items() if k in old and old[k] != val}
                 if changes or quiet:
@@ -208,6 +219,9 @@ def sync_text(r: SyncResult, group: str, today: date, manual: bool) -> Optional[
         return (f"🎩 Готово, Сэр! Подключил расписание вуза — группа {group}!\n\n"
                 f"📚 Загрузил пар: {r.upcoming}{till}. Они в «🕰️ Ваш распорядок», напоминания включены.\n"
                 "🔄 Проверяю сайт каждые 30 минут с 7 до 19 и сразу сообщу, если что-то изменится.")
+    if r.restored:
+        return (f"🎩 Сэр, расписание вуза на месте!\n\n📚 Загрузил пары заново: {r.upcoming}{till}. "
+                "Напоминания о них снова включены.")
     soon = (today + timedelta(days=SOON_DAYS)).isoformat()
     added_soon = [v for v in r.added if v["date"] <= soon]
     lines = []

@@ -985,7 +985,7 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
                 if left:
                     raise VerificationError("wipe failed")
                 self._clear_pending()
-                return Reply("🎩 Готово, Сэр! Всё очищено, начинаем с чистого листа!", edit=True)
+                return Reply(T.RESET_DONE, edit=True)
             if parts[1] == "del_all_tasks":
                 self.tasks.delete(self.tasks.active())
                 self._set_last("task", None)

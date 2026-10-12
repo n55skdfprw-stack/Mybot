@@ -207,8 +207,24 @@ def test_after_clean_slate_lessons_come_back(tmp_path):
     access, alfred, site = make(tmp_path)
     sync(access, alfred)
     alfred.schedule.events.db.wipe_user_data(alfred.user_id)  # «🧹 Чистый лист»
+    text = sync(access, alfred)
+    assert text.startswith("🎩 Сэр, расписание вуза на месте!\n\n📚 Загрузил пары заново: 4 (до 1 октября)")
+    assert len(uni_events(alfred)) == 4
+    assert sync(access, alfred) is None                       # дальше — как обычно, без повторов
+
+
+def test_undo_after_clean_slate_does_not_leave_double_lessons(tmp_path):
+    """«Чистый лист» → пары подгрузились заново → «Отмени последнее» вернул и старые. Лишние убираются."""
+    from .test_access import run as arun
+    access, alfred, site = make(tmp_path)
+    sync(access, alfred)
+    alfred.handle_callback("confirm:reset_all")
+    sync(access, alfred)
+    arun(alfred.handle_text("Отмени последнее"))
+    assert len(uni_events(alfred)) == 8                       # вернулись старые + свежие
     sync(access, alfred)
     assert len(uni_events(alfred)) == 4
+    assert [e.start_time for e in alfred.schedule.day(date(2026, 9, 25))] == ["09:45", "11:30"]
 
 
 # ---------------------------------------------------------------- сбои
@@ -253,6 +269,34 @@ def test_owner_can_ask_to_update(tmp_path):
     assert "Подключил расписание вуза" in room.tg.sent()[-1]
     room.say("расписание вуза")
     assert "актуально" in room.tg.sent()[-1]
+
+
+def test_clean_slate_reloads_lessons_right_away(tmp_path):
+    """Нажали «🧹 Да, начать с чистого листа» — Альфред всё стёр и сразу подгрузил пары вуза."""
+    import asyncio
+    room = Chatroom(tmp_path)
+    room.access.university = UniversityClient("login", "secret", GROUP, fetch=Site().fetch)
+    room.say("Обнови расписание вуза")
+    room.alfred.tasks.create("Купить хлеб", None)
+
+    async def press_and_wait():
+        await room.feed(room.press("confirm:reset_all"))
+        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        await asyncio.gather(*pending)                           # подгрузка пар идёт в фоне — дожидаемся
+
+    run(press_and_wait())
+    assert any("Всё очищено" in t for t in room.tg.edited())
+    assert room.tg.sent()[-1].startswith("🎩 Сэр, расписание вуза на месте!")
+    assert room.alfred.tasks.active() == []                   # всё остальное стёрто
+    assert len(uni_events(room.alfred)) == 4                  # а пары — снова в распорядке
+
+
+def test_clean_slate_without_university_works_as_before(tmp_path):
+    room = Chatroom(tmp_path)
+    room.alfred.tasks.create("Купить хлеб", None)
+    run(room.feed(room.press("confirm:reset_all")))
+    assert any("Всё очищено" in t for t in room.tg.edited()) and room.alfred.tasks.active() == []
+    assert not any("расписание вуза" in t for t in room.tg.sent())
 
 
 def test_selftest_checks_university_login(tmp_path):
