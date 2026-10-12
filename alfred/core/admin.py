@@ -214,7 +214,8 @@ class Admin:
             stop = [("⏹ Остановить для всех", "adm:stopall")]
         bell = "🔔 Предупреждать гостей о техработах: вкл" if self.access.notify_maintenance \
             else "🔕 Предупреждать гостей о техработах: выкл"
-        rows = [[("🔄 Обновить", "adm:sys"), ("👥 Пользователи", "adm:users")], stop, [(bell, "adm:notif")]]
+        rows = [[("🔄 Обновить", "adm:sys"), ("👥 Пользователи", "adm:users")], stop, [(bell, "adm:notif")],
+                [("🧪 Самопроверка", "adm:selftest")]]
         if self.backup:
             rows.append([("📁 Резерв", "bk:view")])
         return Reply(text, buttons=rows, edit=edit)

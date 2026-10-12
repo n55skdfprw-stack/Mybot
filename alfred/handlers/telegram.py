@@ -15,6 +15,7 @@ from ..core.access import Access, Visitor
 from ..core.admin import Admin
 from ..core.reply import Reply
 from ..core.security import MAX_TEXT, RateLimiter, SeenOnce
+from ..core.selftest import run_selftest
 from ..services import search
 from ..ui import texts as T
 from ..ui.address import MAM, SIR, asked_address, personalize
@@ -78,6 +79,7 @@ def build_router(access: Access, admin: Admin, backup=None) -> Router:
     limiter = RateLimiter()
     seen = SeenOnce()
     forwards: dict[int, tuple[int, str | None]] = {}   # пересланный пост из канала ждёт ответа: (канал, текст)
+    background: set = set()                             # фоновые задачи (самопроверка) — держим ссылки, пока идут
     # Только личные сообщения: в группах Альфред молчит.
     router.message.filter(F.chat.type == "private")
 
@@ -179,6 +181,31 @@ def build_router(access: Access, admin: Admin, backup=None) -> Router:
         if v:
             await send_reply(bot, message.chat.id, Reply(T.PRIVACY), owner=v.kind == "owner",
                              address=v.account.address)
+
+    @router.message(Command("selftest"))
+    async def on_selftest(message: Message, bot: Bot):
+        v = await gate(message, bot)
+        if not v:
+            return
+        if v.kind != "owner":
+            await send_reply(bot, message.chat.id, Reply("🎩 Сэр, эта команда — только для хозяина Альфреда!"),
+                             address=v.account.address)
+            return
+        start_selftest(bot, v)
+
+    def start_selftest(bot: Bot, v: Visitor) -> None:
+        """Самопроверка идёт 1–2 минуты в фоне: Альфред тем временем отвечает на сообщения как обычно."""
+        async def go():
+            try:
+                await send_reply(bot, access.owner_tg, Reply("🎩 Запускаю самопроверку, Сэр! Это займёт 1–2 минуты."),
+                                 owner=True, address=v.account.address)
+                report = await run_selftest(access)
+                await send_reply(bot, access.owner_tg, report, owner=True, address=v.account.address)
+            except Exception:
+                log.exception("Самопроверка по команде не удалась")
+        task = asyncio.create_task(go())
+        background.add(task)
+        task.add_done_callback(background.discard)
 
     @router.message(Command("deleteme"))
     async def on_delete_me(message: Message, bot: Bot):
@@ -406,6 +433,10 @@ def build_router(access: Access, admin: Admin, backup=None) -> Router:
         if data.startswith("adm:"):
             if not owner:
                 await callback.answer("Доступ закрыт")
+                return
+            if data == "adm:selftest":
+                await callback.answer("Запускаю самопроверку…")
+                start_selftest(bot, v)
                 return
             was_stopped = access.stopped_for_all
             reply = await admin.callback(data)

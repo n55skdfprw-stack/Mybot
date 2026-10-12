@@ -13,8 +13,9 @@ from alfred.config import load_config
 from alfred.core.access import Access
 from alfred.core.admin import Admin
 from alfred.core.backup_manager import BackupManager
+from alfred.core.selftest import after_update
 from alfred.database.db import Database
-from alfred.handlers.telegram import build_dispatcher
+from alfred.handlers.telegram import build_dispatcher, send_reply
 from alfred.notifications.scheduler import build_scheduler
 from alfred.services.currency import CurrencyService
 from alfred.services.weather import WeatherService
@@ -76,6 +77,15 @@ async def main() -> None:
 
     scheduler = build_scheduler(bot, access, backup)
     scheduler.start()
+
+    async def tell_owner(reply):
+        try:
+            await send_reply(bot, access.owner_tg, reply, owner=True, address=access.owner.address)
+        except Exception:
+            log.exception("Не удалось прислать владельцу итог самопроверки")
+
+    # Новая версия — Альфред сам проверяет себя и присылает владельцу итог (ручная проверка не нужна).
+    selftest = asyncio.create_task(after_update(access, tell_owner))  # noqa: F841 — держим ссылку, пока идёт
 
     log.info("Альфред запущен (версия %s). База: %s", VERSION, config.database_path)
     await dp.start_polling(bot)

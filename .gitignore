@@ -3,9 +3,3 @@ __pycache__/
 .env
 *.db
 .pytest_cache/
-
-# Робот-проверяльщик: ключ от аккаунта Telegram и личные настройки — никогда не в GitHub
-tools/*.session
-tools/*.session-journal
-tools/live_check.env
-tools/live_report.txt
