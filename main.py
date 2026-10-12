@@ -52,6 +52,7 @@ async def main() -> None:
         log.info("🎓 Расписание вуза подключено: группа %s", config.uni_group)
     access = Access(db, Brain(llm), config.owner_id, config.timezone, config.default_city,
                     currency=CurrencyService(), weather=WeatherService(), university=university)
+    llm.on_usage = access.tokens.add            # 🧮 считаем расход токенов для ⚙️ Система
     owner = access.setup_owner()
     log.info("Владелец: user_id=%s, пользователей всего: %s", owner.id, len(access.users.accounts()))
 

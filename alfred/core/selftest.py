@@ -36,6 +36,7 @@ class Step:
     about: str
     check: Callable[[Alfred, str], Optional[str]]    # None — всё хорошо, иначе — что не так
     ideal: Optional[dict] = field(default=None)       # как фразу должен понять GigaChat (для тестов самой проверки)
+    ideal_answer: Optional[str] = None                # для вопросов (ASK) — каким мог бы быть ответ (для тестов)
 
 
 def _day(a: Alfred, shift: int) -> date:
@@ -51,6 +52,11 @@ def _task_due(word: str, shift: int):
             return f"у дела дата {found[0].due_date or 'не стоит'}, а должна быть {_day(a, shift)}"
         return None
     return check
+
+
+def _task_exists(word: str):
+    return lambda a, _r: None if any(word in t.title.lower() for t in a.tasks.active()) \
+        else f"дела «{word}» нет в списке"
 
 
 def _no_task(word: str):
@@ -122,6 +128,8 @@ def _says(*words: str):
 STEPS = [
     Step("Купить молоко завтра", "Дело с датой", _task_due("молок", 1),
          {"intent": "CREATE_TASK", "title": "Купить молоко", "due_when": "завтра"}),
+    Step("и хлеб ещё", "💬 Продолжение: «и хлеб ещё»", _task_exists("хлеб"),
+         {"intent": "CREATE_TASK", "title": "Купить хлеб"}),
     Step("Перенеси молоко на послезавтра", "Перенос дела", _task_due("молок", 2),
          {"intent": "UPDATE_TASK", "target": "молоко", "new_due_when": "на послезавтра"}),
     Step("Вычеркни молоко", "Дело выполнено", _no_task("молок"),
@@ -131,6 +139,8 @@ STEPS = [
     Step("Отмени последнее", "↩️ Отмена последнего", _note("4711", False)),
     Step("Потратил 350 рублей на такси", "Расход", _op("expense", 350, "такси"),
          {"intent": "CREATE_EXPENSE", "amount_text": "350", "category": "такси"}),
+    Step("Сколько я потратил на такси?", "Вопрос о тратах", _says("350"),
+         {"intent": "SEARCH_FINANCE", "category": "такси"}),
     Step("Получил зарплату 50000", "Доход", _op("income", 50000),
          {"intent": "CREATE_INCOME", "amount_text": "50000", "category": "зарплата"}),
     Step("Иван Роботов должен мне 1200", "Долг", _debt(1200),
@@ -140,6 +150,13 @@ STEPS = [
     Step("Каждый понедельник в 10:00 лекция по анатомии", "Повторяющееся событие", _events_at("10:00", 15, 2),
          {"intent": "CREATE_EVENT", "event_type": "lecture", "discipline": "Анатомия", "time_text": "в 10:00",
           "repeat_text": "каждый понедельник"}),
+    Step("Что у меня в пятницу?", "Распорядок на день", _says("18:00"),
+         {"intent": "SHOW_SCHEDULE", "event_when": "в пятницу"}),
+    Step("а в понедельник?", "💬 Продолжение: «а в понедельник?»", _says("10:00"),
+         {"intent": "SHOW_SCHEDULE", "event_when": "в понедельник"}),
+    Step("Когда у меня анатомия?", "💬 Вопрос о своих записях", _says("10:00"),
+         {"intent": "ASK", "query": "когда занятия по анатомии"},
+         ideal_answer="🎩 Анатомия у вас по понедельникам в 10:00, Сэр."),
     Step("У Ивана Роботова день рождения 12 марта", "День рождения", _birthday(12, 3),
          {"intent": "CREATE_BIRTHDAY", "person": "Иван Роботов", "bday_text": "12 марта"}),
     Step("Иван Роботов любит пионы", "Досье", _dossier("пион"),       # Иван уже известен — по долгу

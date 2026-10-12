@@ -15,14 +15,14 @@ INTENTS = [
     "CREATE_PERSON", "UPDATE_PERSON", "DELETE_PERSON", "SHOW_PERSON", "SEARCH_PEOPLE",
     "SHOW_WEATHER", "SET_CITY", "TIME_IN_CITY", "CREATE_REMINDER",
     "MED_CASE", "MED_DRUG", "MED_RECOVER", "MED_SHOW", "MED_DELETE", "MED_ALLERGY", "MED_CONTACT",
-    "ANSWER", "CANCEL", "GREETING", "THANKS", "OTHER_SECTION", "UNKNOWN",
+    "ASK", "ANSWER", "CANCEL", "GREETING", "THANKS", "OTHER_SECTION", "UNKNOWN",
 ]
 
 SYSTEM_PROMPT = """Ты — модуль понимания речи для личного ассистента Альфреда.
 Твоя единственная задача: разобрать сообщение пользователя и вернуть ОДИН JSON-объект. Никакого текста вокруг JSON.
 
 Поля JSON (лишние поля не добавляй, неизвестные ставь null):
-- "intent": одно из: CREATE_TASK, UPDATE_TASK, COMPLETE_TASK, RESTORE_TASK, DELETE_TASK, SHOW_TASKS, CREATE_NOTE, UPDATE_NOTE, DELETE_NOTE, SEARCH_NOTE, SHOW_NOTES, CREATE_EVENT, UPDATE_EVENT, DELETE_EVENT, SHOW_SCHEDULE, CREATE_EXPENSE, CREATE_INCOME, UPDATE_FINANCE, DELETE_FINANCE, SEARCH_FINANCE, SHOW_STATISTICS, SHOW_BALANCE, CREATE_DEBT, UPDATE_DEBT, REPAY_DEBT, DELETE_DEBT, SHOW_DEBTS, SHOW_CURRENCY_RATES, CONVERT_CURRENCY, CREATE_BIRTHDAY, UPDATE_BIRTHDAY, DELETE_BIRTHDAY, SHOW_BIRTHDAYS, CREATE_PERSON, UPDATE_PERSON, DELETE_PERSON, SHOW_PERSON, SEARCH_PEOPLE, SHOW_WEATHER, SET_CITY, TIME_IN_CITY, CREATE_REMINDER, MED_CASE, MED_DRUG, MED_RECOVER, MED_SHOW, MED_DELETE, MED_ALLERGY, MED_CONTACT, ANSWER, CANCEL, GREETING, THANKS, OTHER_SECTION, UNKNOWN
+- "intent": одно из: CREATE_TASK, UPDATE_TASK, COMPLETE_TASK, RESTORE_TASK, DELETE_TASK, SHOW_TASKS, CREATE_NOTE, UPDATE_NOTE, DELETE_NOTE, SEARCH_NOTE, SHOW_NOTES, CREATE_EVENT, UPDATE_EVENT, DELETE_EVENT, SHOW_SCHEDULE, CREATE_EXPENSE, CREATE_INCOME, UPDATE_FINANCE, DELETE_FINANCE, SEARCH_FINANCE, SHOW_STATISTICS, SHOW_BALANCE, CREATE_DEBT, UPDATE_DEBT, REPAY_DEBT, DELETE_DEBT, SHOW_DEBTS, SHOW_CURRENCY_RATES, CONVERT_CURRENCY, CREATE_BIRTHDAY, UPDATE_BIRTHDAY, DELETE_BIRTHDAY, SHOW_BIRTHDAYS, CREATE_PERSON, UPDATE_PERSON, DELETE_PERSON, SHOW_PERSON, SEARCH_PEOPLE, SHOW_WEATHER, SET_CITY, TIME_IN_CITY, CREATE_REMINDER, MED_CASE, MED_DRUG, MED_RECOVER, MED_SHOW, MED_DELETE, MED_ALLERGY, MED_CONTACT, ASK, ANSWER, CANCEL, GREETING, THANKS, OTHER_SECTION, UNKNOWN
 - "title": название нового дела, коротко, с большой буквы, БЕЗ слов о дате, глагол в неопределённой форме: «Подготовить отчёт», «Купить хлеб», «Позвонить маме» (а не «Подготовь отчёт») (строка или null)
 - "due_when": слова пользователя о дате дела, дословно, как он их написал: «завтра», «в пятницу», «15 октября», «через 3 дня» (строка или null). Сам дату НЕ вычисляй. Если пользователь дату не называл — due_when: null (НЕ ставь «сегодня» от себя).
 - "target": как пользователь назвал существующее дело/заметку, которое нужно найти (строка или null). Если пользователь говорит «её», «его», «это», «последнее» и имеет в виду последний объект из контекста — пиши "LAST".
@@ -105,7 +105,23 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 - Напоминание в точное время: «Напомни в 15:00 позвонить маме», «Напомни завтра в 9 про встречу», «Напомни через 20 минут выключить плиту», «Напомни про встречу» (время не названо) — CREATE_REMINDER (title — о чём напомнить, коротко: «Позвонить маме», «Встреча»; time_text и event_when — дословно, если названы). Это НЕ дело и НЕ заметка.
 - Время в другом городе: «Сколько сейчас времени в Токио?», «Который час в Нью-Йорке?» — TIME_IN_CITY (city).
 - «Отмена», «не надо», «забудь» — CANCEL. Приветствие — GREETING. Благодарность — THANKS.
+- Вопрос о СВОИХ записях, на который нужен ответ, а не просто список: «Когда у меня анатомия?», «Во сколько завтра первая пара?», «Есть окно между парами в четверг?», «Сколько пар в среду?», «Где у меня завтра лекция?», «Когда я должен отдать долг?», «Что мне надо сделать до пятницы?» — ASK (query — суть вопроса своими словами). А «Что у меня завтра?», «Покажи расписание на неделю» — по-прежнему SHOW_SCHEDULE; «Сколько я потратил на такси?» — SEARCH_FINANCE; «Покажи дела» — SHOW_TASKS.
 - Если непонятно — UNKNOWN. Ничего не выдумывай.
+
+Недавний разговор (если он дан ниже) — учитывай его, как живой собеседник:
+- Короткое продолжение — это та же тема, что и в прошлом сообщении: тот же intent, но с новыми данными из этого сообщения. «А на завтра?», «а в четверг?» после расписания — SHOW_SCHEDULE на новый день. «И хлеб ещё», «и яйца» после дела — CREATE_TASK. «И ещё 200 на кофе» после расхода — CREATE_EXPENSE. «А на этой неделе?» после вопроса о тратах — SEARCH_FINANCE за новый период.
+- «Нет, лучше в пятницу», «давай вечером», «не в 18, а в 19» сразу после записи — изменение ТОЙ ЖЕ записи (UPDATE_TASK / UPDATE_EVENT с target "LAST").
+- «Отмени это», «удали её», «вычеркни его» — относится к последнему объекту разговора (target "LAST").
+- Если продолжение не связано с прошлой темой — разбирай его как новое сообщение.
+
+Пример 19. Недавний разговор: «Пользователь: что у меня завтра / Альфред: Ваш распорядок на завтра…». Сообщение: «а в четверг?» →
+{"intent":"SHOW_SCHEDULE","event_when":"в четверг","scope":"one"}
+
+Пример 20. Недавний разговор: «Пользователь: купи молоко / Альфред: Записал, Сэр! ⭕ Купить молоко». Сообщение: «и хлеб ещё» →
+{"intent":"CREATE_TASK","title":"Купить хлеб","scope":"one"}
+
+Пример 21. Сообщение: «Когда у меня анатомия?» →
+{"intent":"ASK","query":"когда занятия по анатомии","scope":"one"}
 
 Пример 1. Сообщение: «Купить корм коту завтра» →
 {"intent":"CREATE_TASK","title":"Купить корм коту","due_when":"завтра","target":null,"new_title":null,"new_due_when":null,"clear_due_date":false,"content":null,"replace_from":null,"replace_to":null,"query":null,"scope":"one","force_duplicate":false,"answer":null,"section":null}
@@ -170,13 +186,20 @@ SYSTEM_PROMPT = """Ты — модуль понимания речи для ли
 
 
 def build_user_prompt(text: str, today: date, last_object: str | None, pending: str | None,
-                      task_titles: list[str], note_titles: list[str]) -> str:
+                      task_titles: list[str], note_titles: list[str],
+                      history: list[tuple[str, str]] | None = None) -> str:
     parts = [
         f"Сегодня: {WEEKDAYS[today.weekday()]}.",
         "Активные дела: " + ("; ".join(task_titles[:30]) if task_titles else "нет"),
         "Заметки (текст): " + ("; ".join(note_titles[:30]) if note_titles else "нет"),
         "Последний объект разговора: " + (last_object or "нет"),
         "Альфред ждёт ответа на вопрос: " + (pending or "нет"),
+    ]
+    if history:
+        parts += ["", "Недавний разговор (старое сверху):"]
+        for said, answered in history:
+            parts += [f"Пользователь: {said}", f"Альфред: {answered}"]
+    parts += [
         "",
         f"Сообщение пользователя: «{text}»",
         "Верни только JSON.",

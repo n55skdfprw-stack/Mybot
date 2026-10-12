@@ -8,6 +8,7 @@ import logging
 import re
 import secrets
 import sqlite3
+from collections import deque
 from dataclasses import asdict, replace
 from datetime import date, datetime, timedelta
 from typing import Callable, Optional
@@ -44,6 +45,7 @@ HELP_RE = re.compile(r"^(?:/help|помощь|справка)$|что\s+ты\s+(
                      r"как\s+(?:тобой|с\s+тобой)\s+пользоваться|что\s+ты\s+за\s+бот|расскажи\s+о\s+себе")
 from .med import MED_INTENTS, MedMixin
 from .lookup import LookupMixin
+from .ask import AskMixin
 from ..database.med_repo import MedRepository
 from ..services.med import MedService
 from ..database.repositories import UserRepository
@@ -57,6 +59,9 @@ from .schedule import REMIND_RE, SCHEDULE_BUTTONS, ScheduleMixin, infer_type
 log = logging.getLogger(__name__)
 
 PENDING_MINUTES = 10
+DIALOGUE_SIZE = 6                          # сколько последних реплик помнить для понимания «а на завтра?»
+DIALOGUE_PAUSE = timedelta(minutes=30)     # дольше тишина — разговор начинается заново
+NOTE_INTENTS = {"CREATE_NOTE", "UPDATE_NOTE", "DELETE_NOTE", "SEARCH_NOTE", "SHOW_NOTES"}
 
 # Фразы, которые однозначно означают «верни вычеркнутое дело».
 RESTORE_RE = re.compile(
@@ -68,7 +73,8 @@ RESTORE_RE = re.compile(
 )
 
 
-class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMixin, MedMixin, LookupMixin):
+class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMixin, MedMixin, LookupMixin,
+             AskMixin):
     def __init__(self, brain: Brain, tasks: TaskService, notes: NoteService, schedule: ScheduleService,
                  context: ContextRepository, user_id: int, tz: ZoneInfo,
                  clock: Optional[Callable[[], datetime]] = None, *,
@@ -95,6 +101,8 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
         self._clock = clock
         self._message = ""
         self._raw_text = ""
+        self._dialogue: deque = deque(maxlen=DIALOGUE_SIZE)    # 💬 последние реплики (только в памяти)
+        self._last_intent: Optional[str] = None                 # как ИИ понял последнее сообщение
         # Лимит запросов к ИИ для приглашённых: функция вернёт текст отказа, если лимит исчерпан.
         self.quota: Optional[Callable[[], Optional[str]]] = None
 
@@ -252,17 +260,38 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
 
     async def handle_text(self, text: str) -> Reply:
         if UNDO_RE.fullmatch(search.normalize(text).strip()):
-            return self.undo()
+            reply = self.undo()
+            self._remember_dialogue(text, reply)
+            return reply
         before = self._snap()
         reply = await self._handle_text(text)
         short = text.strip() if len(text.strip()) <= 60 else text.strip()[:59] + "…"
         self._remember_change(before, f"Отменил: «{short}»")
+        self._remember_dialogue(text, reply)
         return reply
+
+    # ------------------------------------------------------------------ 💬 память разговора
+    def _remember_dialogue(self, said: str, reply: Reply) -> None:
+        """Последние реплики — чтобы понимать «а на завтра?», «и хлеб ещё», «нет, давай вечером».
+        Хранятся только в памяти (не в базе) и забываются через полчаса тишины или при перезапуске.
+
+        Тайное не повторяем: от ответа Альфреда — только первая строка («Записал, Сэр!», «Ваш распорядок на
+        завтра»), без самих записей; разговор о заметках (там бывают пароли) — без текста заметки."""
+        answered = reply.text.split("\n")[0]
+        if self._last_intent in NOTE_INTENTS or reply.text.startswith(("🎩 Ваши заметки", "🎩 Вот что я нашёл")):
+            said, answered = "(сообщение о заметке)", "(ответ о заметке)"
+        self._dialogue.append((self.now(), T.short(said.strip(), 200), T.short(answered, 160)))
+
+    def _recent_dialogue(self) -> list[tuple[str, str]]:
+        if self._dialogue and self.now() - self._dialogue[-1][0] > DIALOGUE_PAUSE:
+            self._dialogue.clear()                 # долгая пауза — это уже новый разговор
+        return [(said, answered) for _at, said, answered in self._dialogue]
 
     async def _handle_text(self, text: str) -> Reply:
         text = text.strip()
         self._message = text
         self._raw_text = text  # ровно то, что написал пользователь, без подстановок ИИ
+        self._last_intent = None
         if search.normalize(text).strip(" .!") in T.CANCEL_WORDS:
             if self._clear_pending():
                 return Reply(T.CANCELLED)
@@ -313,6 +342,7 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
             refusal = self.quota()
             if refusal:
                 return Reply(refusal)
+        history = self._recent_dialogue()
         try:
             result = await self.brain.analyze(
                 text=text,
@@ -321,6 +351,7 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
                 pending=pending_question,
                 task_titles=[t.title for t in self.tasks.active()],
                 note_titles=self._notes_for_ai(text, ctx),
+                history=history,
             )
         except BrainUnavailable:
             return Reply(T.AI_UNAVAILABLE)
@@ -333,7 +364,7 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
                 result = await self.brain.analyze(
                     text=text, today=self.today(), last_object=self._last_description(ctx), pending=None,
                     task_titles=[t.title for t in self.tasks.active()],
-                    note_titles=self._notes_for_ai(text, ctx))
+                    note_titles=self._notes_for_ai(text, ctx), history=history)
             except BrainUnavailable:
                 return Reply(T.AI_UNAVAILABLE)
 
@@ -343,6 +374,8 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
             q = " ".join(q.split())
             if q and self.notes.find(q):
                 result = replace(result, intent="SEARCH_NOTE", query=q)
+            elif text.rstrip().endswith("?") and re.search(r"[а-яёa-z]{3}", text.lower()):
+                result = replace(result, intent="ASK", query=text)    # непонятный вопрос — ищем ответ в записях
 
         result = self._guard_restore(result, text)
         result = self._guard_event_vs_note(result, text)
@@ -355,8 +388,13 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
         if REMIND_RE.search(text) and result.intent in ("CREATE_TASK", "CREATE_EVENT", "CREATE_NOTE", "UNKNOWN"):
             result = replace(result, intent="CREATE_REMINDER",
                              title=result.title or result.event_title or result.content)
+        self._last_intent = result.intent
         if result.intent in WEATHER_INTENTS:
             return await self._weather_intent(result)
+        if result.intent == "ASK":
+            if ctx.intent:
+                self._clear_pending()
+            return await self._answer_question(result, self._raw_text)
         await self._prefetch_rates(result)
         try:
             return self._execute(result, ctx)

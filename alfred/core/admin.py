@@ -205,6 +205,7 @@ class Admin:
                 + (self.backup.status_line() + "\n" if self.backup else "") + "\n"
                 f"👥 Пользователей: {len(guests)} · приглашений: {len(self.users.invites())}\n"
                 f"📊 Сообщений ИИ сегодня: вы — {owner_used}, гости — {guests_used}\n"
+                f"{self.access.tokens.lines()}\n"
                 f"🔢 Лимит для гостей по умолчанию: {self.access.default_limit} в день")
         if self.access.stopped_for_all:
             text += ("\n\n⏹ Альфред остановлен для всех: никому ничего не пишет, гостям не отвечает. "

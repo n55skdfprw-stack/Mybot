@@ -23,8 +23,9 @@ class Brain:
         self.llm = llm
 
     async def analyze(self, text: str, today: date, last_object: Optional[str], pending: Optional[str],
-                      task_titles: list[str], note_titles: list[str]) -> BrainResult:
-        prompt = build_user_prompt(text, today, last_object, pending, task_titles, note_titles)
+                      task_titles: list[str], note_titles: list[str],
+                      history: Optional[list[tuple[str, str]]] = None) -> BrainResult:
+        prompt = build_user_prompt(text, today, last_object, pending, task_titles, note_titles, history)
         failures = 0
         # Сначала быстрая модель; если её ответ не удалось разобрать — одна попытка на более умной.
         for pro in (False, True):

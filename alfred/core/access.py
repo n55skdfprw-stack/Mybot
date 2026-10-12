@@ -20,6 +20,7 @@ from ..services.schedule import ScheduleService
 from ..services.tasks import TaskService
 from ..services.weather import WeatherService
 from .alfred import Alfred
+from .tokens import meter_for
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ class Access:
         self.default_limit = default_limit
         self.clock = clock
         self.users = UserRepository(db)
+        self.tokens = meter_for(self.users, clock, tz)     # 🧮 расход токенов GigaChat (Lite / Pro)
         self.started = datetime.now(tz)
         self._alfreds: dict[int, Alfred] = {}
         self._locks: dict[int, asyncio.Lock] = {}

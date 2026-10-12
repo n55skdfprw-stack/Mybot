@@ -184,7 +184,7 @@ def parse_period(text: Optional[str], today: date) -> Optional[tuple[date, date,
     if re.search(r"прошл\w+\s+недел", t):
         monday = today - timedelta(days=today.weekday() + 7)
         return monday, monday + timedelta(days=6), "за прошлую неделю"
-    if re.search(r"недел", t):
+    if re.search(r"(?<![а-яё])недел", t):                # «неделя», но не «поНЕДЕЛьник»
         return today - timedelta(days=today.weekday()), today, "за неделю"
     if re.search(r"прошл\w+\s+месяц", t):
         last_prev = today.replace(day=1) - timedelta(days=1)

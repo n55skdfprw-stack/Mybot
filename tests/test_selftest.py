@@ -21,11 +21,15 @@ class IdealLLM(Checker):
     def __init__(self, misunderstand: tuple = (), down: bool = False):
         super().__init__()
         self.answers = {s.say: s.ideal for s in STEPS if s.ideal}
+        self.replies = {s.say: s.ideal_answer for s in STEPS if s.ideal_answer}
         self.misunderstand, self.down = misunderstand, down
 
     async def complete(self, system, user, pro=False):
         if self.down:
             raise LLMError("GigaChat недоступен")
+        if "Вопрос: «" in user:                                  # вопрос о своих записях — ответ словами
+            asked = user.split("Вопрос: «", 1)[-1].split("»", 1)[0]
+            return self.replies.get(asked, "Не нашёл ответа в записях, Сэр.")
         said = user.split("Сообщение пользователя: «", 1)[-1].split("»", 1)[0]
         if said in self.misunderstand or said not in self.answers:
             return json.dumps({"intent": "UNKNOWN"})
@@ -57,7 +61,9 @@ def test_all_steps_pass_when_ai_understands(tmp_path):
 def test_misunderstood_phrase_is_reported(tmp_path):
     access, _ = make(tmp_path, misunderstand=("Потратил 350 рублей на такси",))
     r = run(run_selftest(access))
-    assert f"⚠️ {len(STEPS) - 1} из {len(STEPS)} — есть проблемы!" in r.text
+    # расход не записался — значит, и на «Сколько я потратил на такси?» ответа нет: честно видны обе проблемы
+    assert f"⚠️ {len(STEPS) - 2} из {len(STEPS)} — есть проблемы!" in r.text
+    assert "❌ Вопрос о тратах" in r.text
     assert "❌ Расход\n   фраза: «Потратил 350 рублей на такси»" in r.text
     assert "✅ Работает:" in r.text and "Дело с датой" in r.text
 

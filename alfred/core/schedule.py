@@ -119,9 +119,9 @@ class ScheduleMixin:
 
     def _show_schedule(self, r: BrainResult) -> Reply:
         when = (r.event_when or "").casefold() + " " + (self._message or "").casefold()
-        if "месяц" in when:
+        if re.search(r"(?<![а-яё])месяц", when):
             return self.schedule_month_view()
-        if "недел" in when:
+        if re.search(r"(?<![а-яё])недел", when):          # «неделя», но не «поНЕДЕЛьник»
             return self.schedule_week_view()
         d = parse_date(r.event_when, self.today()) or self.today()
         return self.schedule_day_view(d)
