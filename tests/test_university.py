@@ -15,11 +15,14 @@ from .test_telegram_flow import Chatroom
 GROUP = "АФК-М26-3"
 
 
+PAIRS = {"09:45": 1, "11:30": 2, "13:30": 3, "15:15": 4}
+
+
 def lesson(uid, day, start, end, discipline="Физическая реабилитация", kind="Лекция", place="Ауд. 421",
            groups=(GROUP,), subgroup=None):
     return {"id": f"{uid}:{day}", "date": day, "start": start, "end": end, "discipline": discipline, "kind": kind,
             "place": place, "groups": list(groups), "subgroup": subgroup,
-            "teacher": "Иванов И.И., канд. пед. наук, доц.", "pairNo": 1}
+            "teacher": "Иванов И.И., канд. пед. наук, доц.", "pairNo": PAIRS.get(start)}
 
 
 class Site:
@@ -136,6 +139,37 @@ def test_new_lesson_soon_is_reported_far_one_is_silent(tmp_path):
     assert "➕ Новая пара: Лекция «Биомеханика», вт 29 сен 15:15, Ауд. 421" in text
     assert "12 окт" not in text                               # через 2+ недели — добавлена тихо
     assert len(alfred.schedule.day(date(2026, 10, 12))) == 1
+
+
+# ---------------------------------------------------------------- как выглядит в распорядке
+
+def test_pairs_have_numbers_and_blank_line_between(tmp_path):
+    access, alfred, site = make(tmp_path)
+    alfred.schedule.create({"type": "training", "date": "2026-09-25", "start_time": "18:00"}, alfred.now())
+    alfred.schedule.create({"type": "training", "date": "2026-09-25", "start_time": "19:00"}, alfred.now())
+    sync(access, alfred)
+    week = alfred.schedule_week_view().text
+    assert ("🗓️ Завтра, 25 сентября\n"
+            "1-я пара · 09:45–11:15 — Лекция\n📚 Физическая реабилитация\n🚪 Ауд. 421\n"
+            "💬 Преподаватель: Иванов И.И.\n\n"
+            "2-я пара · 11:30–13:00 — Практика\n") in week
+    assert "\n\n18:00 — Тренировка\n19:00 — Тренировка" in week     # свои короткие события — компактно
+    day = alfred.schedule_day_view(date(2026, 9, 25)).text                # экран «Завтра» — так же
+    assert "Иванов И.И.\n\n2-я пара · 11:30–13:00" in day
+
+
+def test_pair_numbers_added_quietly_to_already_loaded_lessons(tmp_path):
+    """Пары загружены прежней версией (без номеров) — номера дописываются молча, без «изменений»."""
+    import json
+    access, alfred, site = make(tmp_path)
+    sync(access, alfred)
+    key = f"uni_known:{alfred.user_id}"
+    old = {k: {f: v for f, v in val.items() if f != "pair_no"} for k, val in json.loads(access.users.setting(key)).items()}
+    access.users.set_setting(key, json.dumps(old, ensure_ascii=False))
+    for e in uni_events(alfred):
+        alfred.schedule.update(e, {"pair_no": None}, alfred.now())
+    assert sync(access, alfred) is None
+    assert [e.pair_no for e in alfred.schedule.day(date(2026, 9, 25))] == [1, 2]
 
 
 # ---------------------------------------------------------------- записи человека

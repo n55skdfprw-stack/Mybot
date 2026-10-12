@@ -56,7 +56,20 @@ def details(e: Event) -> list[str]:
 
 def block(e: Event, clock: bool = False) -> str:
     icon = CLOCKS[int(e.start_time[:2]) % 12] + " " if clock else ""
-    return "\n".join([f"{icon}{time_span(e)} — {label(e)}", *details(e)])
+    pair = f"{e.pair_no}-я пара · " if e.pair_no else ""        # пары из расписания вуза — с номером
+    return "\n".join([f"{icon}{pair}{time_span(e)} — {label(e)}", *details(e)])
+
+
+def blocks(events: list[Event], clock: bool = False) -> str:
+    """Несколько событий подряд. Если у события есть подробности (предмет, аудитория, преподаватель) —
+    отделяем пустой строкой, чтобы пары не сливались; короткие («18:00 — Тренировка») идут компактно."""
+    parts = [block(e, clock) for e in events]
+    if not parts:
+        return ""
+    out = parts[0]
+    for prev, cur in zip(parts, parts[1:]):
+        out += ("\n\n" if "\n" in prev or "\n" in cur else "\n") + cur
+    return out
 
 
 def repeat_description(kind: str, weekdays: list[int], month_day: int | None) -> str:

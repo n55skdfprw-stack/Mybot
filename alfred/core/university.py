@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 PREFIX = "uni:"
 SYNC_DAYS = 21                 # забираем пары на 3 недели вперёд
 SOON_DAYS = 7                  # о новых парах ближе недели — сообщаем; дальше — тихо добавляем
-SOURCE_FIELDS = ("type", "title", "date", "start_time", "end_time", "location", "discipline")
+SOURCE_FIELDS = ("type", "title", "date", "start_time", "end_time", "location", "discipline", "pair_no")
 WEEKDAY_SHORT = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
 
 ERRORS = {
@@ -55,12 +55,14 @@ def lesson_values(item: dict) -> Optional[dict]:
     else:
         etype, title = "other", kind or "Занятие"           # экзамен, зачёт, консультация…
     teacher = (item.get("teacher") or "").split(",")[0].strip()
+    pair = item.get("pairNo")
     notes = [f"Преподаватель: {teacher}" if teacher else "",
              f"Подгруппа {item['subgroup']}" if item.get("subgroup") else ""]
     return {"type": etype, "title": title, "date": day[:10], "start_time": start[:5],
             "end_time": (item.get("end") or "")[:5] or None, "location": item.get("place") or None,
             "discipline": item.get("discipline") or None, "comment": "; ".join(n for n in notes if n) or None,
-            "focus": None, "recurrence_id": None, "external_id": PREFIX + str(item.get("id"))}
+            "focus": None, "recurrence_id": None, "external_id": PREFIX + str(item.get("id")),
+            "pair_no": pair if isinstance(pair, int) and 0 < pair < 20 else None}
 
 
 def _source(values: dict) -> dict:
@@ -135,10 +137,15 @@ class UniversitySync:
                     a.schedule.update(ev, _source(v), now)
             elif ev is None:
                 continue                                   # человек удалил пару сам — не навязываем
-            elif known[ext] != _source(v):
-                changes = {k: val for k, val in _source(v).items() if known[ext].get(k) != val}
-                a.schedule.update(ev, changes, now)
-                result.changed.append((known[ext], _source(v)))
+            else:
+                old, new = known[ext], _source(v)
+                # поля, которых Альфред раньше не запоминал (номер пары появился в 8.32), — дописываем молча
+                quiet = {k: val for k, val in new.items() if k not in old and ev.as_values().get(k) != val}
+                changes = {k: val for k, val in new.items() if k in old and old[k] != val}
+                if changes or quiet:
+                    a.schedule.update(ev, {**quiet, **changes}, now)
+                if changes:
+                    result.changed.append((old, new))
 
         for ext, old in known.items():
             if ext in lessons or old["date"] < today.isoformat():

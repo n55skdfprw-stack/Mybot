@@ -78,28 +78,24 @@ class ScheduleMixin:
         when = {0: "на сегодня", 1: "на завтра"}.get(delta, f"на {S.day_title(d, today).lower()}")
         if not events:
             return Reply(f"🎩 {when.capitalize()} в распорядке ничего нет, Сэр!", buttons=SCHEDULE_BUTTONS, edit=edit)
-        body = "\n".join(S.block(e) for e in events)
-        return Reply(f"🎩 Ваш распорядок {when}, Сэр!\n\n{body}", buttons=SCHEDULE_BUTTONS, edit=edit)
+        return Reply(f"🎩 Ваш распорядок {when}, Сэр!\n\n{S.blocks(events)}", buttons=SCHEDULE_BUTTONS, edit=edit)
 
     def _period_view(self, start: date, end: date, title: str, empty: str, edit: bool) -> Reply:
         today = self.today()
         events = self.schedule.between(start, end)
         if not events:
             return Reply(empty, buttons=SCHEDULE_BUTTONS, edit=edit)
-        days: list[str] = []
-        current = None
+        by_day: dict[date, list] = {}
         for e in events:
-            if e.date != current:
-                current = e.date
-                days.append(f"🗓️ {S.day_title(e.date, today)}")
-            days[-1] += "\n" + S.block(e)
+            by_day.setdefault(e.date, []).append(e)
         text = f"🎩 {title}\n\n"
         shown = 0
-        for day in days:
+        for d, day_events in by_day.items():
+            day = f"🗓️ {S.day_title(d, today)}\n{S.blocks(day_events)}"
             if len(text) + len(day) > TELEGRAM_LIMIT:
                 break
             text += day + "\n\n"
-            shown += day.count("\n")
+            shown += len(day_events)
         hidden = len(events) - shown
         if hidden > 0:
             text += f"…и ещё событий: {hidden}!"
@@ -273,12 +269,10 @@ class ScheduleMixin:
         pool = [e for e in self.schedule.between(start, end) if self._matches_kind(e, k)]
         if not pool:
             return Reply(f"🎩 Сэр, {label} в распорядке нет!", buttons=SCHEDULE_BUTTONS)
-        days, current = [], None
+        by_day: dict[date, list] = {}
         for e in pool:
-            if e.date != current:
-                current = e.date
-                days.append(f"🗓️ {S.day_title(e.date, self.today())}")
-            days[-1] += "\n" + S.block(e)
+            by_day.setdefault(e.date, []).append(e)
+        days = [f"🗓️ {S.day_title(d, self.today())}\n{S.blocks(evs)}" for d, evs in by_day.items()]
         return Reply(f"🎩 Ваши {label}, Сэр!\n\n" + "\n\n".join(days), buttons=SCHEDULE_BUTTONS)
 
     # ------------------------------------------------------------ 🔔 «Напомни …»
