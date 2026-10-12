@@ -35,8 +35,10 @@ class Visitor:
 class Access:
     def __init__(self, db: Database, brain: Brain, owner_telegram_id: int, tz: ZoneInfo, city: str,
                  currency: Optional[CurrencyService] = None, weather: Optional[WeatherService] = None,
-                 default_limit: int = DEFAULT_LIMIT, clock: Optional[Callable[[], datetime]] = None):
+                 default_limit: int = DEFAULT_LIMIT, clock: Optional[Callable[[], datetime]] = None,
+                 university=None):
         self.db = db
+        self.university = university          # 🎓 UniversityClient владельца или None (не подключено)
         self.brain = brain
         self.owner_tg = owner_telegram_id
         self.tz = tz

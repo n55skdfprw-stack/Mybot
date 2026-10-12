@@ -16,10 +16,12 @@ from typing import Callable, Optional
 
 from .. import VERSION
 from ..database.db import Database
+from ..services.university import UniversityError
 from ..ui import texts as T
 from .access import Access
 from .alfred import Alfred
 from .reply import Reply
+from .university import ERRORS as UNI_ERRORS
 
 log = logging.getLogger(__name__)
 
@@ -174,6 +176,8 @@ async def run_selftest(access: Access, steps: list[Step] = STEPS) -> Reply:
             for step in steps:
                 results.append(await _run_step(alfred, step))
                 alfred._clear_pending()                    # незаконченный вопрос не должен съесть следующую фразу
+            if access.university:
+                results.append(await _university_step(access, alfred))
     finally:
         _running = False
     return _report(results, time.monotonic() - started)
@@ -196,6 +200,24 @@ async def _run_step(alfred: Alfred, step: Step) -> tuple[Step, Optional[str], st
     except Exception as exc:
         log.exception("Самопроверка: не удалось проверить «%s»", step.say)
         return step, f"не удалось проверить ({type(exc).__name__})", text
+
+
+UNIVERSITY = Step("вход на сайт расписания вуза", "Расписание вуза", lambda _a, _r: None)
+
+
+async def _university_step(access: Access, alfred: Alfred) -> tuple[Step, Optional[str], str]:
+    """🎓 Можно ли войти на сайт вуза и забрать пары на неделю (в распорядок ничего не записываем)."""
+    try:
+        today = alfred.today()
+        items = await asyncio.wait_for(access.university.lessons(today, today + timedelta(days=7)), STEP_TIMEOUT)
+    except asyncio.TimeoutError:
+        return UNIVERSITY, "сайт вуза не ответил за минуту", ""
+    except UniversityError as e:
+        return UNIVERSITY, UNI_ERRORS.get(str(e), str(e)), ""
+    except Exception as exc:
+        log.exception("Самопроверка: расписание вуза")
+        return UNIVERSITY, f"ошибка внутри Альфреда ({type(exc).__name__})", ""
+    return UNIVERSITY, None, f"пар на неделю: {len(items)}"
 
 
 def _report(results: list[tuple[Step, Optional[str], str]], seconds: float) -> Reply:

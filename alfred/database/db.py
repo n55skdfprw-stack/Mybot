@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS events (
     discipline TEXT,
     focus TEXT,
     recurrence_id INTEGER REFERENCES recurrences(id),
+    external_id TEXT,                -- «uni:…» — пара из расписания вуза; NULL — запись человека
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -324,6 +325,9 @@ class Database:
                 conn.execute("ALTER TABLE people ADD COLUMN dossier_hidden INTEGER NOT NULL DEFAULT 0")
             if "dossier_explicit" not in cols:
                 conn.execute("ALTER TABLE people ADD COLUMN dossier_explicit INTEGER NOT NULL DEFAULT 0")
+            ecols = {r["name"] for r in conn.execute("PRAGMA table_info(events)")}
+            if "external_id" not in ecols:
+                conn.execute("ALTER TABLE events ADD COLUMN external_id TEXT")
             ucols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
             for col, ddl in (("username", "TEXT"), ("display_name", "TEXT"),
                              ("role", "TEXT NOT NULL DEFAULT 'user'"), ("status", "TEXT NOT NULL DEFAULT 'active'"),

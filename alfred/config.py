@@ -20,6 +20,13 @@ class Config:
     timezone: ZoneInfo
     default_city: str
     data_key: str = ""          # ключ шифрования базы (DATA_KEY); пусто — шифрование выключено
+    uni_login: str = ""         # 🎓 расписание вуза: логин ДО (UNI_LOGIN) — только в Railway → Variables
+    uni_password: str = ""      # пароль ДО (UNI_PASSWORD) — только в Railway → Variables
+    uni_group: str = ""         # группа, например АФК-М26-3 (UNI_GROUP)
+
+    @property
+    def university_on(self) -> bool:
+        return bool(self.uni_login and self.uni_password and self.uni_group)
 
 
 def _default_db_path() -> str:
@@ -52,6 +59,9 @@ def load_config() -> Config:
         timezone=ZoneInfo(os.getenv("DEFAULT_TIMEZONE", "Europe/Moscow").strip()),
         default_city=os.getenv("DEFAULT_CITY", "Санкт-Петербург").strip(),
         data_key=_data_key(),
+        uni_login=os.getenv("UNI_LOGIN", "").strip(),
+        uni_password=os.getenv("UNI_PASSWORD", ""),
+        uni_group=os.getenv("UNI_GROUP", "").strip(),
     )
 
 

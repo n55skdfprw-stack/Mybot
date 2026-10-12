@@ -7,7 +7,7 @@
 - 19:00 — расписание на завтра;
 - 03:00 — продление повторяющихся событий.
 Каждую минуту — напоминания о событиях распорядка и о приёме лекарств.
-По Москве: 04:00 — резервная копия.
+По Москве: 04:00 — резервная копия; с 7 до 19 каждые 30 минут (и сразу после запуска) — 🎓 расписание вуза.
 
 Всё это — для каждого, кому служит Альфред (владелец и приглашённые), у каждого — своё.
 
@@ -15,7 +15,7 @@
 """
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Awaitable, Callable
 
 from aiogram import Bot
@@ -23,6 +23,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from ..core.access import Access
 from ..core.reply import Reply
+from ..core.university import sync_and_report
 from ..handlers.telegram import send_reply
 
 log = logging.getLogger(__name__)
@@ -130,6 +131,22 @@ def build_scheduler(bot: Bot, access: Access, backup=None) -> AsyncIOScheduler:
                     alfred.med_send_failed(reply)
         await for_each(access, "med reminders", job)
 
+    async def run_university():
+        """🎓 Расписание вуза владельца: сверяем с сайтом и сообщаем об изменениях."""
+        if not access.university:
+            return
+        acc = access.owner
+        if acc.paused or acc.status != "active":
+            return
+        try:
+            alfred = access.alfred_for(acc)
+            async with access.lock(acc.id):
+                reply = await sync_and_report(alfred, access.university, access.users)
+            if reply:
+                await send(acc, reply)
+        except Exception:
+            log.exception("Расписание вуза: сверка не удалась")
+
     async def run_backup():
         if not backup or not backup.channel:
             return
@@ -144,4 +161,8 @@ def build_scheduler(bot: Bot, access: Access, backup=None) -> AsyncIOScheduler:
     scheduler.add_job(run_reminders, "interval", seconds=60, id="reminders", **common)
     scheduler.add_job(run_med, "interval", seconds=60, id="med", **common)
     scheduler.add_job(run_backup, "cron", hour=4, minute=0, id="backup", **common)
+    # 🎓 каждые 30 минут с 7:02 до 18:32 (по Москве; вечером и ночью не беспокоим) и сразу после запуска —
+    # чтобы первая загрузка не ждала. Минуты 02/32 — чтобы не совпадать с рассылками ровно в :00
+    scheduler.add_job(run_university, "cron", hour="7-18", minute="2,32", id="university",
+                      next_run_time=datetime.now(access.tz) + timedelta(seconds=60), **common)
     return scheduler

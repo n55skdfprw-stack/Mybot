@@ -7,7 +7,7 @@ from typing import Optional
 from .db import Database
 
 EVENT_FIELDS = ("type", "title", "date", "start_time", "end_time", "comment", "location",
-                "discipline", "focus", "recurrence_id")
+                "discipline", "focus", "recurrence_id", "external_id")
 RULE_FIELDS = ("kind", "weekdays", "month_day", "type", "title", "start_time", "end_time", "comment",
                "location", "discipline", "focus", "start_date", "end_date", "generated_until")
 
@@ -29,12 +29,13 @@ class Event:
     discipline: Optional[str] = None
     focus: Optional[str] = None
     recurrence_id: Optional[int] = None
+    external_id: Optional[str] = None      # «uni:…» — пара из расписания вуза (обновляется сама)
 
     def as_values(self) -> dict:
         return {"type": self.type, "title": self.title, "date": self.date.isoformat(),
                 "start_time": self.start_time, "end_time": self.end_time, "comment": self.comment,
                 "location": self.location, "discipline": self.discipline, "focus": self.focus,
-                "recurrence_id": self.recurrence_id}
+                "recurrence_id": self.recurrence_id, "external_id": self.external_id}
 
 
 @dataclass
@@ -70,7 +71,7 @@ def _event(r) -> Event:
     return Event(id=r["id"], type=r["type"], title=r["title"], date=date.fromisoformat(r["date"]),
                  start_time=r["start_time"], end_time=r["end_time"], comment=r["comment"],
                  location=r["location"], discipline=r["discipline"], focus=r["focus"],
-                 recurrence_id=r["recurrence_id"])
+                 recurrence_id=r["recurrence_id"], external_id=r["external_id"])
 
 
 def _rule(r) -> Rule:

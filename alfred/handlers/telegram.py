@@ -16,12 +16,16 @@ from ..core.admin import Admin
 from ..core.reply import Reply
 from ..core.security import MAX_TEXT, RateLimiter, SeenOnce
 from ..core.selftest import run_selftest
+from ..core.university import sync_and_report
 from ..services import search
 from ..ui import texts as T
 from ..ui.address import MAM, SIR, asked_address, personalize
 from ..ui.keyboards import inline, main_menu
 
 log = logging.getLogger(__name__)
+
+UNI_RE = re.compile(r"\s*(?:альфред,?\s*)?(?:(?:обнови|синхронизируй|загрузи|подтяни|проверь)\s+)?"
+                    r"(?:мо[её]\s+)?расписание\s+(?:вуза|университета|универа|пар)[\s.!?]*")
 
 
 async def send_with_retry(bot: Bot, chat_id: int, text: str, **kw):
@@ -300,6 +304,17 @@ def build_router(access: Access, admin: Admin, backup=None) -> Router:
             wants_now = re.search(r"сделай|создай|сними", text.lower())
             reply = await backup.callback("bk:now" if wants_now else "bk:view", chat_id)
             reply = replace(reply, edit=False)
+            await send_reply(bot, chat_id, reply, owner=True, address=v.account.address)
+            return
+        if owner and UNI_RE.fullmatch(text.lower()):
+            # «Обнови расписание вуза» — сверяем с сайтом вуза сразу, а не ждём плановой проверки
+            if access.university:
+                await bot.send_chat_action(chat_id, "typing")
+                reply = await sync_and_report(access.alfred_for(v.account), access.university, access.users,
+                                              manual=True)
+            else:
+                reply = Reply("🎩 Сэр, расписание вуза ещё не подключено!\n\nДобавьте в Railway → Variables "
+                              "UNI_LOGIN, UNI_PASSWORD и UNI_GROUP — и после перезапуска я подключусь сам.")
             await send_reply(bot, chat_id, reply, owner=True, address=v.account.address)
             return
         if owner:

@@ -18,6 +18,7 @@ from alfred.database.db import Database
 from alfred.handlers.telegram import build_dispatcher, send_reply
 from alfred.notifications.scheduler import build_scheduler
 from alfred.services.currency import CurrencyService
+from alfred.services.university import UniversityClient
 from alfred.services.weather import WeatherService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -45,8 +46,12 @@ async def main() -> None:
     else:
         log.error("GigaChat НЕ доступен с этого сервера! Проверьте ключ или хостинг.")
 
+    university = None
+    if config.university_on:
+        university = UniversityClient(config.uni_login, config.uni_password, config.uni_group)
+        log.info("🎓 Расписание вуза подключено: группа %s", config.uni_group)
     access = Access(db, Brain(llm), config.owner_id, config.timezone, config.default_city,
-                    currency=CurrencyService(), weather=WeatherService())
+                    currency=CurrencyService(), weather=WeatherService(), university=university)
     owner = access.setup_owner()
     log.info("Владелец: user_id=%s, пользователей всего: %s", owner.id, len(access.users.accounts()))
 
