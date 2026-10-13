@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from dataclasses import replace
 from typing import Optional
 
-from ..brain.dates import find_dates, parse_date, parse_repeat, parse_time_range, parse_until
+from ..brain.dates import BIWEEKLY_RE, find_dates, parse_date, parse_repeat, parse_time_range, parse_until
 from ..brain.parser import BrainResult
 from ..database.schedule_repo import Event
 from ..services import search
@@ -25,7 +25,8 @@ UNTIL_RE = re.compile(
     r"|\bна\s+(?:ближайшие\s+|следующие\s+)?(?:\d+\s+|[а-яё]+\s+)?(?:недел\w*|месяц\w*)",
     re.IGNORECASE,
 )
-REPEAT_WORDS = re.compile(r"кажд|\bпо\s+\w+(ам|ям)\b|будн|выходн|ежедн|еженед|ежемес", re.IGNORECASE)
+REPEAT_WORDS = re.compile(r"кажд|\bпо\s+\w+(ам|ям)\b|будн|выходн|ежедн|еженед|ежемес|раз\s+в\s+\w+\s+недел",
+                          re.IGNORECASE)
 TYPE_WORDS = [("reminder", r"напомина"), ("training", r"тренир"), ("lecture", r"лекци"), ("practice", r"практик|семинар|\bпар[аыу]\b"),
               ("doctor", r"врач|стоматолог|терапевт|при[её]м|клиник|анализ|\bлор\b|окулист|офтальмолог|"
                          r"невролог|гинеколог|хирург|дерматолог|кардиолог|уролог|эндокринолог|травматолог|"
@@ -208,7 +209,9 @@ class ScheduleMixin:
                          else f"🎩 Сэр, такое событие уже есть в вашем распорядке!")
         self._set_last("event", event.id)
         head = T.pick("🎩 Разумеется, Сэр! Записал в распорядок!", "🎩 Записал, Сэр!")
-        return Reply(f"{head}\n\n🗓️ {S.day_title(event.date, self.today())}\n{S.block(event)}")
+        biweekly = repeat_text and BIWEEKLY_RE.search(repeat_text.casefold())
+        tail = "\n\n🔁 Повтор «раз в две недели» я пока не умею — записал только это занятие." if biweekly else ""
+        return Reply(f"{head}\n\n🗓️ {S.day_title(event.date, self.today())}\n{S.block(event)}{tail}")
 
     # ------------------------------------------------------------ удалить сразу несколько
     def _matches_kind(self, e: Event, kind: str) -> bool:
@@ -270,6 +273,11 @@ class ScheduleMixin:
         found = find_dates(t, self.today())
         start = found[0] if found else self.today()
         end = found[0] if found else self.today() + timedelta(days=30)
+        if not found and re.search(r"(?<![а-яё])недел", t):          # «лекции на этой / следующей неделе»
+            monday = self.today() - timedelta(days=self.today().weekday())
+            if re.search(r"следующ", t):
+                monday += timedelta(days=7)
+            start, end = max(monday, self.today()), monday + timedelta(days=6)
         pool = [e for e in self.schedule.between(start, end) if self._matches_kind(e, k)]
         if not pool:
             return Reply(f"🎩 Сэр, {label} в распорядке нет!", buttons=SCHEDULE_BUTTONS)
@@ -319,6 +327,12 @@ class ScheduleMixin:
         ctx = self._ctx()
         if ctx.intent or ctx.entity_type != "event" or not ctx.entity_id:
             return None                                  # Альфред сейчас ждёт ответа на вопрос — это ответ
+        # Только СРАЗУ после напоминания (прошлая реплика Альфреда — о нём, не дольше 10 минут назад).
+        # Иначе «на 15:00 встреча с Олей» через пару часов переносило бы старое напоминание.
+        last = self._dialogue[-1] if getattr(self, "_dialogue", None) else None
+        about_reminder = last and ("напомина" in last[2].lower() or "напомню" in last[2].lower())
+        if not about_reminder or self.now() - last[0] > timedelta(minutes=10):
+            return None
         e = self.schedule.get(ctx.entity_id)
         t = text.strip().lower()
         if not e or e.type != "reminder" or not re.search(r"\d", t):

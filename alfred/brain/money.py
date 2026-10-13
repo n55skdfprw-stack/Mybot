@@ -5,7 +5,7 @@ import re
 from datetime import date, timedelta
 from typing import Optional
 
-from .dates import MONTHS, _month_num, _norm
+from .dates import MONTH_ABBR, MONTHS, _month_num, _norm
 
 _WORD_NUM = {"один": 1, "одна": 1, "одну": 1, "два": 2, "две": 2, "три": 3, "четыре": 4, "пять": 5, "шесть": 6,
              "семь": 7, "восемь": 8, "девять": 9, "десять": 10, "пятнадцать": 15, "двадцать": 20,
@@ -73,7 +73,9 @@ def _mult(word: Optional[str]) -> int:
 
 
 def parse_amount(text: Optional[str]) -> Optional[float]:
-    """Первая сумма в тексте. Числа из дат («24 сентября», «10:00», «01.10») пропускаются."""
+    """Сумма в тексте. Числа из дат и времени («24 сентября», «20 числа», «в 18», «10:00», «01.10»)
+    и количества («2 пары», «3 кг») не считаются суммой. Если чисел несколько — сначала то, что явно сумма:
+    с рублями/валютой/«тыс», после «за» («носки за 400»)."""
     if not text:
         return None
     t = _norm(text)
@@ -82,27 +84,49 @@ def parse_amount(text: Optional[str]) -> Optional[float]:
     corr = re.search(r"\bне\s+[\d\s.,]+\w*\s*,?\s*а\s+([\d][\d\s]*(?:[.,]\d+)?)\s*(\w+)?", t)
     if corr:  # «не 5000, а 3000»
         return _to_number(corr.group(1), corr.group(2))
-    for m in re.finditer(r"(?<![\d:.])(\d[\d\s]*(?:[.,]\d+)?)(?:\s*(млн|миллион\w*|лям\w*|тысяч\w*|тыс\w*|тыщ\w*|"
-                         r"косар\w*|косых|т\.р\.?|тр|к|k)(?![а-яa-z]))?(?![\d:])", t):
-        after = t[m.end():m.end() + 12].strip()
-        if not m.group(2) and any(after.startswith(stem) for stem in MONTHS) and _month_num(after.split()[0] if after else ""):
-            continue  # это дата: «24 сентября»
-        if re.match(r"[./]\d", t[m.end():m.end() + 2]):
-            continue
+    sure, plain = [], []
+    for m in re.finditer(r"(?<![\d:.])(\d+(?:[  ]\d{3})*(?:[.,]\d+)?)(?:\s*(млн|миллион\w*|лям\w*|тысяч\w*|"
+                         r"тыс\w*|тыщ\w*|косар\w*|косых|т\.р\.?|тр|к|k)(?![а-яa-z]))?(?![\d:])", t):
+        after = t[m.end():m.end() + 14]
+        word = after.strip().split()[0] if after.strip() else ""
+        if not m.group(2) and _month_num(word) and any(word.startswith(s) for s in list(MONTHS) + list(MONTH_ABBR)):
+            continue                                            # дата: «24 сентября», «15 окт»
+        if re.match(r"[./]\d", after[:2]) or DATE_OR_QTY.match(after):
+            continue                                            # «01.10», «20 числа», «2 пары», «3 кг»
         value = _to_number(m.group(1), m.group(2))
-        if value is not None:
-            return value
+        if value is None:
+            continue
+        before = t[max(0, m.start() - 12):m.start()]
+        if m.group(2) or CURRENCY_AFTER.match(after) or re.search(r"\b(?:за|на\s+сумму|стоимостью|стоил\w*)\s*$", before):
+            sure.append(value)
+        elif not re.search(r"\b(?:в|к|с|до)\s*$", before):     # «в 18», «к 9» — это время
+            plain.append(value)
+    if sure or plain:
+        return (sure or plain)[0]
     m = re.search(r"\b(" + "|".join(sorted(_WORD_NUM, key=len, reverse=True)) + r")\s+(тысяч\w*|тысяч[аи]|тысячу)",
                   t)
     if m:
         return float(_WORD_NUM[m.group(1)] * 1000)
     if re.search(r"\bтысяч[ау]\b", t):
         return 1000.0
+    m = re.search(r"\b(сто|двести|триста|четыреста|пятьсот|шестьсот|семьсот|восемьсот|девятьсот)\b", t)
+    if m:                                                       # «пятьсот», «сто рублей»
+        return float(HUNDREDS[m.group(1)])
     return None
 
 
+HUNDREDS = {"сто": 100, "двести": 200, "триста": 300, "четыреста": 400, "пятьсот": 500, "шестьсот": 600,
+            "семьсот": 700, "восемьсот": 800, "девятьсот": 900}
+
+
+DATE_OR_QTY = re.compile(r"\s*(?:-?\s*(?:го|е|му|ое|ого)\b\s*)?(?:числ|раз\b|раза\b|пар[аыу]?\b|шт|штук|кг|кило|"
+                         r"гр?\b|грамм|л\b|литр|мл\b|человек|чел\b|дн[еяй]|день|недел|месяц|час|мин|сек|км\b|"
+                         r"этаж|поездк|бутыл|пачк|кус|порци|бокал|чашк|упаков|коробк|банк[аи]\b|ящик|место|места)")
+CURRENCY_AFTER = re.compile(r"\s*(?:р\b|р\.|руб|₽|\$|€|евро|доллар|бакс|юан|тенге|фунт|лир|usd|eur|rub)")
+
+
 def _to_number(raw: str, mult: Optional[str]) -> Optional[float]:
-    digits = raw.strip().replace(" ", "").replace(",", ".")
+    digits = raw.strip().replace(" ", "").replace(" ", "").replace(",", ".")
     try:
         value = float(digits)
     except ValueError:
@@ -174,6 +198,9 @@ def parse_period(text: Optional[str], today: date) -> Optional[tuple[date, date,
         return VAGUE
     if re.search(r"\bсегодня\b", t):
         return today, today, "за сегодня"
+    if re.search(r"\bпозавчера\b", t):
+        y = today - timedelta(days=2)
+        return y, y, "за позавчера"
     if re.search(r"\bвчера\b", t):
         y = today - timedelta(days=1)
         return y, y, "за вчера"

@@ -9,8 +9,10 @@ import re
 from datetime import timedelta
 from typing import Optional
 
+from ..brain.dates import find_dates
 from ..services import search
 from ..services.finance import _forms
+from ..ui import texts as T
 from ..ui import dossier_texts as DT
 from ..ui import finance_texts as F
 from ..ui import schedule_texts as S
@@ -26,6 +28,9 @@ LOOKUP_RES = [
 SECTION_RE = re.compile(r"\bв\s+(?:замет|дел|задач|финанс|расход|доход|распоряд|расписан|досье|медкарт|дн\w*\s+рожд)|"
                         r"погод|курс|должен|долг|сколько")
 SKIP = {"себе", "тебе", "себя", "мне", "меня", "нас", "вас", "нем", "ней", "них", "этом", "том"}
+NOT_A_TOPIC = {"деньги", "финансы", "расходы", "доходы", "траты", "дела", "задачи", "заметки", "распорядок",
+               "расписание", "пары", "лекции", "погоду", "погода", "день рождения", "дни рождения", "медкарту",
+               "здоровье", "неделю", "месяц", "выходные"}
 EACH = 5
 
 
@@ -88,6 +93,8 @@ class LookupMixin:
         query = _clean(m.group(1))
         if not query or query in SKIP or len(query) < 2:
             return None
+        if query in NOT_A_TOPIC or find_dates(query, self.today()):
+            return None          # «что у меня про завтра», «что про деньги» — это расписание / финансы, не поиск
         self._clear_pending()
         # исходное написание (с большой буквы) — чтобы имя в ответе выглядело как у человека
         raw = re.search(re.escape(query), search.normalize(text))
@@ -117,7 +124,9 @@ class LookupMixin:
                 if e.recurrence_id in seen_series:
                     continue
                 seen_series.add(e.recurrence_id)
-            events.append(f"{e.date:%d.%m} {S.time_span(e)} — {S.label(e)}")
+            what = S.label(e) + (f" «{T.short(e.discipline, 45)}»" if e.discipline else "") \
+                + (f", {e.location}" if e.location else "")
+            events.append(f"{e.date:%d.%m} {S.time_span(e)} — {what}")
         parts.append(_section("🕰️ Распорядок", events))
         notes = [n.title for n in self.notes.all() if match(f"{n.title} {n.content}")]
         parts.append(_section("📝 Заметки", notes))

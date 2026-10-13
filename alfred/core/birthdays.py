@@ -20,6 +20,8 @@ BD_BUTTONS = [[("🎁 Идея подарка", "bd:giftpick")], [("✏️ Из�
 BD_INTENTS = {"CREATE_BIRTHDAY", "UPDATE_BIRTHDAY", "DELETE_BIRTHDAY", "SHOW_BIRTHDAYS"}
 BD_WORDS = re.compile(r"день\s*рожд|дня\s*рожд|днюх|днем\s*рожд|родил(ся|ась)|\bдр\b")
 REMIND_DAYS = ((0, "🥳 Сегодня"), (1, "🎈 Завтра"), (7, "📅 Через неделю"))
+BD_TODO_RE = re.compile(r"купи|подар|поздрав|напомни|заказ|отмет|празд|торт|цвет|открытк|позвон|приглас|собрат|"
+                        r"скинуться|организ|сходить|пойти|\bна\s+др\b|\bна\s+день\s+рожд")
 
 
 class BirthdayMixin:
@@ -75,7 +77,9 @@ class BirthdayMixin:
         if r.intent == "CREATE_BIRTHDAY" and correction:
             return replace(r, intent="UPDATE_BIRTHDAY")
         # «У мамы день рождения 12 марта» — это день рождения, а не дело или событие.
-        if r.intent not in BD_INTENTS and BD_WORDS.search(t) and parsed and r.intent not in ("ANSWER", "CANCEL"):
+        # Но «Купить подарок на др Сергею к 12 марта», «Напомни про др мамы завтра» — это дело и напоминание.
+        if r.intent not in BD_INTENTS and BD_WORDS.search(t) and parsed and r.intent not in ("ANSWER", "CANCEL") \
+                and not BD_TODO_RE.search(t):
             return replace(r, intent="UPDATE_BIRTHDAY" if correction else "CREATE_BIRTHDAY", bday_text=text)
         # «Не 12, а 14 марта» сразу после дня рождения — исправляем его.
         ctx = self._ctx()

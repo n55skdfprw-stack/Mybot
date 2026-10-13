@@ -9,7 +9,7 @@ import re
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from ..brain.dates import MONTHS, _norm, find_dates, parse_date
+from ..brain.dates import _MONTH_RE, MONTHS, _add_months, _norm, find_dates, parse_date
 from ..brain.money import VAGUE, parse_amount, parse_conversion, parse_currency, parse_period
 from ..brain.parser import BrainResult
 from ..database.finance_repo import Debt, Operation, Person
@@ -170,10 +170,20 @@ class FinanceMixin:
             return self.today() - timedelta(days=2)
         if re.search(r"\bвчера\b", t):
             return self.today() - timedelta(days=1)
-        d = parse_date(r.op_when, self.today()) if r.op_when else None
-        if d and d > self.today():  # «24 сентября» в прошлом году не бывает будущим расходом
-            d = d.replace(year=d.year - 1)
-        return d or self.today()
+        # день операции — только из слов о нём («в пятницу», «20 числа»); дата из остального текста
+        # («купил билет на 20 октября») — это не день траты
+        when = _norm(r.op_when or "")
+        d = parse_date(when, self.today()) if when else None
+        if d and d > self.today():
+            # расход — всегда в прошлом: «в пятницу» → прошедшая пятница, «20 числа» → 20-е прошлого месяца,
+            # «24 декабря» → прошлого года
+            if re.search(r"понедельн|вторник|сред[уаы]|четверг|пятниц|суббот|воскресен|\b(?:пн|вт|ср|чт|пт|сб|вс)\b", when):
+                d -= timedelta(days=7)
+            elif not re.search(r"\d\s*" + _MONTH_RE + r"|\d[./]\d", when):
+                d = _add_months(d, -1)
+            else:
+                d = d.replace(year=d.year - 1)
+        return d if d and d <= self.today() else self.today()
 
     def _money_in(self, amount_text: Optional[str], currency: Optional[str]) -> tuple | Reply | None:
         """(рубли, исходная сумма или None, валюта или None) — или Reply, если нет курса."""

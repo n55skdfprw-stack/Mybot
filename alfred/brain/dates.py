@@ -14,10 +14,14 @@ MONTHS = {
     "январ": 1, "феврал": 2, "март": 3, "апрел": 4, "ма": 5, "июн": 6,
     "июл": 7, "август": 8, "сентябр": 9, "октябр": 10, "ноябр": 11, "декабр": 12,
 }
-_MONTH_RE = r"(январ[яь]|феврал[яь]|марта?|апрел[яь]|ма[яй]|июн[яь]|июл[яь]|августа?|сентябр[яь]|октябр[яь]|ноябр[яь]|декабр[яь])"
+_MONTH_RE = (r"(январ[яь]|феврал[яь]|марта?|апрел[яь]|ма[яй]|июн[яь]|июл[яь]|августа?|сентябр[яь]|октябр[яь]|"
+             r"ноябр[яь]|декабр[яь]|(?:янв|фев|мар|апр|июн|июл|авг|сент?|окт|нояб?|дек)\.?(?![а-я]))")
 
 WEEKDAYS = [("понедельн", 0), ("вторник", 1), ("сред", 2), ("четверг", 3),
             ("пятниц", 4), ("суббот", 5), ("воскресен", 6)]
+SHORT_DAYS = {"пн": 0, "вт": 1, "ср": 2, "чт": 3, "пт": 4, "сб": 5, "вс": 6}       # «в пт», «по вт и чт»
+MONTH_ABBR = {"янв": 1, "фев": 2, "мар": 3, "апр": 4, "июн": 6, "июл": 7, "авг": 8, "сен": 9, "окт": 10,
+              "ноя": 11, "дек": 12}                                                   # «15 окт», «3 нояб.»
 
 NUMBERS = {"один": 1, "одну": 1, "одна": 1, "два": 2, "две": 2, "три": 3, "четыре": 4, "пять": 5,
            "шесть": 6, "семь": 7, "восемь": 8, "девять": 9, "десять": 10, "пару": 2}
@@ -31,7 +35,7 @@ def _month_num(word: str) -> int:
     for stem, num in MONTHS.items():
         if word.startswith(stem) and not (stem == "ма" and word.startswith("март")):
             return num
-    return 0
+    return MONTH_ABBR.get(word.rstrip(".")[:3], 0) if len(word.rstrip(".")) <= 5 else 0
 
 
 def _add_months(d: date, n: int) -> date:
@@ -69,9 +73,9 @@ def find_dates(text: str, today: date) -> list[date]:
         if d and all(p != pos for p, _ in found):
             found.append((pos, d))
 
-    for m in re.finditer(r"\bпослезавтра\b", t):
+    for m in re.finditer(r"\bпосле\s?завтра\b", t):                      # «послезавтра» и «после завтра»
         add(m.start(), today + timedelta(days=2))
-    for m in re.finditer(r"(?<!после)\bзавтра\b", t):
+    for m in re.finditer(r"(?<!после)(?<!после )\bзавтра\b", t):
         add(m.start(), today + timedelta(days=1))
     for m in re.finditer(r"\bсегодня\b", t):
         add(m.start(), today)
@@ -112,11 +116,15 @@ def find_dates(text: str, today: date) -> list[date]:
             continue
         add(m.start(), d if year else _future(d, today))
 
-    # (в/на) (следующую) пятницу
+    # (в/на) (следующую) пятницу, «в пт», «на следующей неделе в среду»
+    next_week = bool(re.search(r"следующ\w*\s+недел", t))
     for m in re.finditer(r"(следующ\w*\s+)?(понедельн\w*|вторник\w*|сред[уаы]\w*|четверг\w*|"
-                         r"пятниц\w*|суббот\w*|воскресен\w*)", t):
-        wd = next(n for stem, n in WEEKDAYS if m.group(2).startswith(stem))
-        if m.group(1):
+                         r"пятниц\w*|суббот\w*|воскресен\w*|\b(?:пн|вт|ср|чт|пт|сб|вс)\b)", t):
+        word = m.group(2)
+        wd = SHORT_DAYS.get(word)
+        if wd is None:
+            wd = next(n for stem, n in WEEKDAYS if word.startswith(stem))
+        if m.group(1) or next_week:
             next_monday = today + timedelta(days=7 - today.weekday())
             d = next_monday + timedelta(days=wd)
         else:
@@ -124,7 +132,7 @@ def find_dates(text: str, today: date) -> list[date]:
             d = today + timedelta(days=ahead)
         add(m.start(), d)
 
-    for m in re.finditer(r"\bна\s+выходн", t):
+    for m in re.finditer(r"\b(?:на|в)\s+(?:эт\w+\s+|ближайш\w+\s+)?выходн", t):     # «на выходных», «в эти выходные»
         ahead = (5 - today.weekday()) % 7
         add(m.start(), today + timedelta(days=ahead))
 
@@ -194,11 +202,14 @@ def _one_time(t: str) -> str | None:
     return None
 
 
+DATE_AFTER = re.compile(r"\s*(?:-?\s*(?:го|е|му|ое|ого)\b|числ|" + _MONTH_RE + r")")
+
+
 def parse_time_range(text: str | None) -> tuple[str | None, str | None]:
     """«в 18:00» → ("18:00", None); «с 10 до 12» → ("10:00", "12:00"); «в полседьмого» → ("18:30", None)."""
     if not text:
         return None, None
-    t = _norm(text)
+    t = re.sub(r"\bполовин[аеуы]\s+", "пол", _norm(text))                      # «в половине седьмого» = «в полседьмого»
     token = r"(\d{1,2}[:.]\d{2}(?:\s+(?:утра|дня|вечера|ночи))?|пол\s*-?\s*\w+(?:\s+(?:утра|дня|вечера|ночи))?|" \
             + _H + _PART.replace("(утра|дня|вечера|ночи)", "(?:утра|дня|вечера|ночи)") + r")"
     m = re.search(r"\bс\s+" + token + r"\s+до\s+" + token, t)
@@ -211,7 +222,12 @@ def parse_time_range(text: str | None) -> tuple[str | None, str | None]:
     m = re.search(r"(\d{1,2}[:.]\d{2})\s*[-–—]\s*(\d{1,2}[:.]\d{2})", t)
     if m:
         return _one_time(m.group(1)), _one_time(m.group(2))
+    m = re.search(r"\b(?:в|на|к)\s+(\d{1,2})\s+(\d{2})\b(?!\s*(?:числ|-|руб|р\b|₽))", t)   # «в 19 30»
+    if m and int(m.group(1)) < 24 and int(m.group(2)) < 60:
+        return _fmt(int(m.group(1)), int(m.group(2))), None
     for m in re.finditer(r"\b(?:в|на|к)\s+" + token, t):
+        if DATE_AFTER.match(t[m.end():]):
+            continue                         # «на 20 число», «на 15 октября», «к 26-му» — это дата, а не время
         value = _one_time(m.group(1))
         if value:
             return value, None
@@ -229,11 +245,16 @@ def parse_time_range(text: str | None) -> tuple[str | None, str | None]:
 
 # ============================================================ повторения
 
+BIWEEKLY_RE = re.compile(r"раз\s+в\s+(?:две|2|три|3)\s+недел|кажд\w+\s+(?:вторую|2-?ю|две|2)\s+недел|"
+                         r"через\s+неделю\s+по|по\s+нечетн|по\s+четн")
+
 def parse_repeat(text: str | None, start: date) -> tuple[str | None, list[int]]:
     """Возвращает (вид, дни недели): ("weekly", [0, 3]), ("monthly", []) или (None, [])."""
     if not text:
         return None, []
     t = _norm(text)
+    if BIWEEKLY_RE.search(t):
+        return None, []          # «раз в две недели» пока не умеем — не выдаём это за «каждую неделю»
     if re.search(r"будн", t):
         return "weekly", [0, 1, 2, 3, 4]
     if re.search(r"выходн", t):
@@ -242,9 +263,10 @@ def parse_repeat(text: str | None, start: date) -> tuple[str | None, list[int]]:
         return "weekly", [0, 1, 2, 3, 4, 5, 6]
     if re.search(r"месяц|ежемесячн", t):
         return "monthly", []
-    days = sorted({n for stem, n in WEEKDAYS if re.search(stem, t)})
+    days = {n for stem, n in WEEKDAYS if re.search(stem, t)}
+    days |= {n for short, n in SHORT_DAYS.items() if re.search(rf"\b{short}\b", t)}      # «по вт и чт»
     if days:
-        return "weekly", days
+        return "weekly", sorted(days)
     if re.search(r"недел|еженедельн", t):
         return "weekly", [start.weekday()]
     return None, []
@@ -259,6 +281,8 @@ def parse_until(text: str | None, today: date) -> date | None:
     if not text:
         return None
     t = _norm(text)
+    if re.search(r"до\s+нового\s+года", t):
+        return date(today.year, 12, 31)
     m = re.search(r"до\s+конца\s+(\w+)", t)
     if m:
         word = m.group(1)

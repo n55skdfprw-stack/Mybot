@@ -11,6 +11,7 @@
 Записи человека (тренировки, врач, встречи) не трогаются никогда.
 """
 
+import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
@@ -58,11 +59,26 @@ def lesson_values(item: dict) -> Optional[dict]:
     pair = item.get("pairNo")
     notes = [f"Преподаватель: {teacher}" if teacher else "",
              f"Подгруппа {item['subgroup']}" if item.get("subgroup") else ""]
-    return {"type": etype, "title": title, "date": day[:10], "start_time": start[:5],
-            "end_time": (item.get("end") or "")[:5] or None, "location": item.get("place") or None,
-            "discipline": item.get("discipline") or None, "comment": "; ".join(n for n in notes if n) or None,
-            "focus": None, "recurrence_id": None, "external_id": PREFIX + str(item.get("id")),
-            "pair_no": pair if isinstance(pair, int) and 0 < pair < 20 else None}
+    values = {"type": etype, "title": title, "date": day[:10], "start_time": start[:5],
+              "end_time": (item.get("end") or "")[:5] or None, "location": item.get("place") or None,
+              "discipline": item.get("discipline") or None, "comment": "; ".join(n for n in notes if n) or None,
+              "focus": None, "recurrence_id": None,
+              "pair_no": pair if isinstance(pair, int) and 0 < pair < 20 else None}
+    values["external_id"] = lesson_key(values, item.get("subgroup"))
+    return values
+
+
+def lesson_key(v: dict, subgroup=None) -> str:
+    """Пару узнаём по сути — день, время, вид, предмет (и подгруппа), а НЕ по номеру записи на сайте:
+    сайт меняет эти номера при каждом своём обновлении, и одна и та же пара выглядела бы «новой»."""
+    raw = "|".join(str(x or "").casefold().strip() for x in
+                   (v["date"], v["start_time"], v["type"], v.get("title"), v.get("discipline"), subgroup))
+    return PREFIX + hashlib.sha1(raw.encode()).hexdigest()[:16]
+
+
+def _old_key(ext: str) -> bool:
+    """Ключ из прежней версии («uni:<номер на сайте>:<дата>») — до 8.37."""
+    return ":" in ext[len(PREFIX):]
 
 
 def _source(values: dict) -> dict:
@@ -133,6 +149,10 @@ class UniversitySync:
         if not lessons and len(future_known) >= 5:
             log.warning("Сайт вуза вернул пустое расписание — ничего не удаляю (возможен сбой сайта)")
             return SyncResult(error="unavailable")
+        if any(_old_key(k) for k in list(known) + list(mine)):
+            # пары записаны прежней версией (по номерам сайта, которые он сам всё время меняет) —
+            # молча перепривязываем их к новому ключу, без сообщений «перенесли с 09:45 на 09:45»
+            return self._rekey(lessons, mine, now, today)
         # «Чистый лист» или восстановление базы стёрли все пары — значит, это не «человек удалил сам»
         wiped = bool(future_known) and not any(k in mine for k in future_known)
         result.restored = wiped
@@ -173,6 +193,29 @@ class UniversitySync:
         result.last_day = date.fromisoformat(upcoming[-1]) if upcoming else None
         return result
 
+    def _rekey(self, lessons: dict, mine: dict, now: datetime, today: date) -> SyncResult:
+        """Тихая перепривязка: та же пара (день, время, вид) получает новый ключ; сообщений нет."""
+        a = self.alfred
+        by_slot: dict[tuple, list[Event]] = {}
+        for e in mine.values():
+            by_slot.setdefault((e.date.isoformat(), e.start_time, e.type), []).append(e)
+        used: set[int] = set()
+        for ext, v in lessons.items():
+            ev = next((e for e in by_slot.get((v["date"], v["start_time"], v["type"]), []) if e.id not in used), None)
+            if ev:
+                used.add(ev.id)
+                want = {**_source(v), "external_id": ext}
+                if any(ev.as_values().get(k) != val for k, val in want.items()):
+                    a.schedule.update(ev, want, now)
+            else:
+                self._add(v, now)
+        leftovers = [e for e in mine.values() if e.id not in used and e.date >= today]
+        if leftovers:
+            a.schedule.delete(leftovers, now)
+        self.users.set_setting(self.key, json.dumps({k: _source(v) for k, v in lessons.items()}, ensure_ascii=False))
+        upcoming = sorted(v["date"] for v in lessons.values() if v["date"] >= today.isoformat())
+        return SyncResult(upcoming=len(upcoming), last_day=date.fromisoformat(upcoming[-1]) if upcoming else None)
+
     def _add(self, v: dict, now: datetime) -> None:
         try:
             self.alfred.schedule.create(v, now)
@@ -187,8 +230,10 @@ class UniversitySync:
     def _pair_moves(r: SyncResult) -> None:
         """Пара пропала в один день и появилась в другой (тот же предмет и вид) — это перенос, а не отмена."""
         for old in list(r.removed):
-            twin = next((n for n in r.added if n.get("discipline") == old.get("discipline")
-                         and n["type"] == old["type"]), None)
+            twins = [n for n in r.added if n.get("discipline") == old.get("discipline") and n["type"] == old["type"]]
+            # из нескольких кандидатов — ближайший по дате и времени (а не первый попавшийся)
+            twin = min(twins, key=lambda n: (abs((date.fromisoformat(n["date"]) - date.fromisoformat(old["date"])).days),
+                                             n["start_time"] != old["start_time"]), default=None)
             if twin:
                 r.removed.remove(old)
                 r.added.remove(twin)
@@ -226,6 +271,10 @@ def sync_text(r: SyncResult, group: str, today: date, manual: bool) -> Optional[
     added_soon = [v for v in r.added if v["date"] <= soon]
     lines = []
     for old, new in r.moved:
+        if (old["date"], old["start_time"]) == (new["date"], new["start_time"]):
+            if old.get("location") != new.get("location"):     # день и время те же — сменилась только аудитория
+                r.changed.append((old, new))
+            continue                                           # ничего по сути не изменилось — не беспокоим
         lines.append(f"🔄 {_name(new)}: перенесли с {_when(old)} на {_when(new)}"
                      + (f", {new['location']}" if new.get("location") else ""))
     for old, new in r.changed:
@@ -238,7 +287,8 @@ def sync_text(r: SyncResult, group: str, today: date, manual: bool) -> Optional[
             what.append(f"конец в {new.get('end_time')}")
         if old.get("type") != new.get("type") or old.get("title") != new.get("title"):
             what.append(f"теперь это {S.TYPE_NOM.get(new['type'], 'занятие')}")
-        lines.append(f"✏️ {_name(new)}, {_when(new)}: " + (", ".join(what) or "изменения в описании"))
+        if what:                                               # без видимых отличий (номер пары и т.п.) — молчим
+            lines.append(f"✏️ {_name(new)}, {_when(new)}: " + ", ".join(what))
     for old in r.removed:
         lines.append(f"❌ Отменена: {_name(old)}, {_when(old)}")
     for v in added_soon:

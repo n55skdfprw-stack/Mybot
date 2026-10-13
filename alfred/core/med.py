@@ -14,7 +14,10 @@ from ..ui import med_texts as M
 from .reply import ProtectedReply as Reply
 
 MED_INTENTS = {"MED_CASE", "MED_DRUG", "MED_RECOVER", "MED_SHOW", "MED_DELETE", "MED_ALLERGY", "MED_CONTACT"}
-RECOVER_RE = re.compile(r"\b(выздоровел\w*|поправил\w*|вылечил\w*)\b")
+# «Поправился», «вылечилась» — да; «поправил время», «вылечил кота» — нет (это не про своё здоровье)
+RECOVER_RE = re.compile(r"\b(выздоровел\w*|поправил(?:ся|ась|ись)|вылечил(?:ся|ась|ись))\b")
+# «У мамы аллергия…», «у Сергея непереносимость…» — чужая, в вашу медкарту не пишем
+OTHERS_ALLERGY_RE = re.compile(r"\bу\s+(?!меня\b)[а-яё]+(?:\s+[а-яё]+)?\s+(?:аллерги|непереносимост)", re.I)
 ALLERGY_RE = re.compile(r"(?:аллерги\w*|непереносимост\w*)\s+(?:на\s+|к\s+)?(.+)", re.IGNORECASE)
 ALLERGY_OFF_RE = re.compile(r"больше нет|уже нет|прошла|убери|удали|нет аллерги", re.IGNORECASE)
 
@@ -24,7 +27,8 @@ def allergy_from(text: str) -> Optional[str]:
     m = ALLERGY_RE.search(text or "")
     if not m:
         return None
-    what = re.split(r"\s+(?:больше|уже)\s+нет|\s+прошла", m.group(1), maxsplit=1)[0]
+    what = re.split(r"\s+(?:больше|уже)\s+нет|\s+прошла|,?\s+(?:запиши|запомни|сохрани|отметь|пожалуйста)\b",
+                    m.group(1), maxsplit=1, flags=re.I)[0]
     what = what.strip(" .!,")
     if what and m.group(0).lower().startswith("непереносим"):
         return f"непереносимость {what}"          # «лактозы» само по себе читается странно
@@ -88,7 +92,8 @@ class MedMixin:
             return replace(r, intent="MED_RECOVER")
         # «У меня аллергия на пенициллин» — ИИ мог выбрать не то или не заполнить, на что аллергия.
         what = allergy_from(text)
-        if what and r.intent not in ("MED_CASE", "MED_DRUG"):
+        if what and r.intent not in ("MED_CASE", "MED_DRUG", "UPDATE_PERSON", "CREATE_PERSON") \
+                and not OTHERS_ALLERGY_RE.search(text):
             med = dict(r.med or {})
             med.setdefault("allergy", what)
             if not med.get("allergy"):

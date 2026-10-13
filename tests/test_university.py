@@ -72,7 +72,9 @@ def test_lesson_values():
     assert (v["type"], v["title"], v["discipline"], v["location"]) == ("lecture", None, "Физическая реабилитация",
                                                                          "Ауд. 421")
     assert (v["date"], v["start_time"], v["end_time"]) == ("2026-09-25", "09:45", "11:15")
-    assert v["comment"] == "Преподаватель: Иванов И.И." and v["external_id"] == "uni:a:2026-09-25"
+    assert v["comment"] == "Преподаватель: Иванов И.И." and v["external_id"].startswith("uni:")
+    same = lesson_values({**lesson("a", "2026-09-25", "09:45", "11:15"), "id": "СОВСЕМ-ДРУГОЙ-НОМЕР"})
+    assert same["external_id"] == v["external_id"]          # номер записи на сайте ключ не меняет
     assert lesson_values(lesson("b", "2026-09-25", "11:30", "13:00", kind="Практическое занятие"))["type"] == "practice"
     exam = lesson_values(lesson("e", "2026-12-20", "10:00", "12:00", kind="Экзамен", subgroup="2"))
     assert (exam["type"], exam["title"]) == ("other", "Экзамен") and "Подгруппа 2" in exam["comment"]
@@ -111,7 +113,7 @@ def test_room_and_time_changes_are_applied_and_reported(tmp_path):
     text = sync(access, alfred)
     assert text.startswith("🎩 Сэр, в расписании вуза изменения!")
     assert "аудитория Ауд. 421 → Ауд. 305" in text
-    assert "время пн 28 сен 13:30 → пн 28 сен 15:15" in text
+    assert "перенесли с пн 28 сен 13:30 на пн 28 сен 15:15" in text
     fri = alfred.schedule.day(date(2026, 9, 25))
     assert fri[0].location == "Ауд. 305"
     assert [e.start_time for e in alfred.schedule.day(date(2026, 9, 28))] == ["15:15"]
@@ -170,6 +172,53 @@ def test_pair_numbers_added_quietly_to_already_loaded_lessons(tmp_path):
     assert [e.pair_no for e in alfred.schedule.day(date(2026, 9, 25))] == [1, 2]
 
 
+# ---------------------------------------------------------------- живой спам 13.10: сайт меняет номера записей
+
+def test_site_renumbering_lessons_is_not_a_change(tmp_path):
+    """Сайт при каждом обновлении выдаёт парам новые номера — это НЕ перенос и НЕ «расписание на месте»."""
+    access, alfred, site = make(tmp_path)
+    sync(access, alfred)
+    for n in range(3):
+        for i in site.items:
+            i["id"] = f"новый-номер-{n}-{i['id']}"
+        assert sync(access, alfred) is None                   # ни «перенесли с 09:45 на 09:45», ни «на месте»
+    assert len(uni_events(alfred)) == 4
+    assert "актуально" in sync(access, alfred, manual=True)
+
+
+def test_lessons_saved_by_old_version_are_rekeyed_quietly(tmp_path):
+    """Пары, загруженные 8.31–8.36 (ключ — номер записи сайта), перепривязываются молча, комментарий сохраняется."""
+    import json
+    access, alfred, site = make(tmp_path)
+    sync(access, alfred)
+    key = f"uni_known:{alfred.user_id}"
+    old_known = {}
+    for e in uni_events(alfred):
+        old_ext = f"uni:{e.id}-старый:{e.date.isoformat()}"
+        alfred.schedule.update(e, {"external_id": old_ext}, alfred.now())
+        old_known[old_ext] = {k: v for k, v in e.as_values().items()
+                              if k in ("type", "title", "date", "start_time", "end_time", "location", "discipline")}
+    lec = alfred.schedule.day(date(2026, 9, 25))[0]
+    alfred.schedule.update(lec, {"comment": "взять конспект"}, alfred.now())
+    access.users.set_setting(key, json.dumps(old_known, ensure_ascii=False))
+    assert sync(access, alfred) is None
+    evs = uni_events(alfred)
+    assert len(evs) == 4 and not any(":" in e.external_id[4:] for e in evs)
+    assert alfred.schedule.get(lec.id).comment == "взять конспект"            # та же запись, не пересоздана
+    assert sync(access, alfred) is None
+
+
+def test_real_move_and_room_change_are_reported_exactly(tmp_path):
+    access, alfred, site = make(tmp_path)
+    sync(access, alfred)
+    site.find("a")["start"], site.find("a")["end"] = "13:30", "15:00"       # пару перенесли на другое время
+    site.find("c")["place"] = "Ауд. 410"                                     # сменилась аудитория
+    text = sync(access, alfred)
+    assert "🔄 Лекция «Физическая реабилитация»: перенесли с пт 25 сен 09:45 на пт 25 сен 13:30" in text
+    assert "✏️ Лекция «Анатомия», пн 28 сен 13:30: аудитория Ауд. 305 → Ауд. 410" in text
+    assert text.count("\n") == 3                                             # заголовок, пустая строка, 2 строки
+
+
 # ---------------------------------------------------------------- записи человека
 
 def test_own_events_and_own_edits_are_kept(tmp_path):
@@ -198,7 +247,7 @@ def test_lesson_entered_by_hand_is_adopted_not_duplicated(tmp_path):
     sync(access, alfred)
     fri = alfred.schedule.day(date(2026, 9, 25))
     assert [e.start_time for e in fri] == ["09:45", "11:30"]
-    assert fri[0].external_id == "uni:a:2026-09-25" and fri[0].location == "Ауд. 421"
+    assert fri[0].external_id.startswith("uni:") and fri[0].location == "Ауд. 421"
 
 
 def test_after_clean_slate_lessons_come_back(tmp_path):
