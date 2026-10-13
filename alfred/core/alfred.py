@@ -43,7 +43,7 @@ UNDO_RE = re.compile(r"(?:альфред,?\s*)?(?:отмени\s+(?:послед
                      r"верни\s+(?:всё\s+|все\s+)?как\s+было|undo|/undo|↩️\s*отменить\s+последнее)[\s.!]*")
 HELP_RE = re.compile(r"^(?:/help|помощь|справка)$|что\s+ты\s+(?:умеешь|можешь)|что\s+умеешь|твои\s+(?:функции|возможности)|"
                      r"как\s+(?:тобой|с\s+тобой)\s+пользоваться|что\s+ты\s+за\s+бот|расскажи\s+о\s+себе")
-from .med import MED_INTENTS, MedMixin
+from .med import MedMixin
 from .lookup import LookupMixin
 from .ask import AskMixin
 from ..database.med_repo import MedRepository
@@ -447,8 +447,9 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
                 # «На что был расход?» — «Это зарплата»: значит, это был доход
                 if pending.intent == "CREATE_EXPENSE" and INCOME_RE.search(f"{r.answer} {self._raw_text}"):
                     pending = replace(pending, intent="CREATE_INCOME")
-                # для медкарты добавляем исходные слова: «мелатонин на ночь» + ответ «Бессонница»
-                said = ctx.data.get("said") if pending.intent in MED_INTENTS else None
+                # исходные слова + ответ: «Потратил на такси» + «500», «мелатонин на ночь» + «Бессонница» —
+                # иначе Альфред забывает сказанное до вопроса и переспрашивает (например, «На что был расход?»)
+                said = ctx.data.get("said")
                 self._message = f"{said} {self._message}" if said else f"{self._message} {r.answer}"
                 self._clear_pending()
                 return self._execute(pending, Context())
@@ -581,6 +582,10 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
         if missing == "bday_text":
             return parse_birthday(text, self.today()) is not None
         if missing in ("amount_text", "new_amount_text"):
+            # «26 числа», «к 15-му» — это дата, а не сумма (если рядом нет рублей или валюты)
+            money_words = r"₽|руб|\bр\b|\$|€|евро|доллар|тыс|\d\s*к\b"          # «120к» — это сумма
+            if find_dates(text, self.today()) and not re.search(money_words, text.lower()):
+                return False
             return parse_amount(text) is not None
         return True
 
@@ -997,6 +1002,12 @@ class Alfred(ScheduleMixin, FinanceMixin, BirthdayMixin, DossierMixin, WeatherMi
             return self.med_callback(parts)
 
         if kind == "sched":
+            if parts[1] == "day" and len(parts) >= 3:          # нажали день в списке недели или месяца
+                try:
+                    d = date.fromisoformat(parts[2])
+                except ValueError:
+                    return Reply("🎩 Сэр, эта кнопка уже неактуальна!", clear_source_buttons=True)
+                return self.schedule_day_view(d, edit=True, back=parts[3] if len(parts) > 3 else None)
             if parts[1] == "week":
                 return self.schedule_week_view(edit=True)
             if parts[1] == "month":

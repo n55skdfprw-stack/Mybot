@@ -9,7 +9,7 @@ import re
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from ..brain.dates import MONTHS, _norm, parse_date
+from ..brain.dates import MONTHS, _norm, find_dates, parse_date
 from ..brain.money import VAGUE, parse_amount, parse_conversion, parse_currency, parse_period
 from ..brain.parser import BrainResult
 from ..database.finance_repo import Debt, Operation, Person
@@ -45,10 +45,22 @@ FLAGS = {"USD": "🇺🇸 Доллар", "EUR": "🇪🇺 Евро", "CNY": "�
 RATE_WORDS = re.compile(r"\b(курс\w*|какой|какая|сколько|стоит|сейчас|сегодня|цб|по|у|на|к|рублю|рублям)\b")
 PURCHASE_RE = re.compile(r"\b(потратил\w*|купил\w*|заплатил\w*|оплатил\w*|отдал\w*\s+за)\b", re.IGNORECASE)
 TOPUP_RE = re.compile(r"\bпополн\w*", re.IGNORECASE)
+# «Продлить», «Оплатить», «Пополнить» — глагол «что сделать?» в начале: это дело на будущее, а не трата
+TODO_RE = re.compile(r"^\s*(?:надо\s+|нужно\s+|не\s+забыть\s+|не\s+забудь\s+)?[а-яё]+(?:ть|ти|чь)(?:ся)?\b", re.I)
 INCOME_RE = re.compile(r"\b(зп|з/п|зарплат\w*|аванс\w*|преми\w*|стипенди\w*|пенси\w*|кэшбэк\w*|кешбэк\w*|"
                        r"получил\w*|пришл\w*|пришёл|пришел|заработал\w*|вернули|возврат\w*|доход\w*)\b", re.IGNORECASE)
 # На эти вопросы Альфреда короткий ответ — это всегда ответ, а не новая команда.
 SHORT_ANSWER_PARAMS = {"category", "person", "amount_text", "new_amount_text", "bday_text", "query", "time_text"}
+
+
+DATE_NUM_RE = re.compile(r"\b\d{1,2}(?:\s*-?\s*(?:го|е|му|ое|ого))?\s+(?:числ[ао]|январ|феврал|март|апрел|ма[яй]|"
+                         r"июн|июл|август|сентябр|октябр|ноябр|декабр)\w*|\b\d{1,2}\s*-\s*(?:го|е|му)\b"
+                         r"|\b\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?\b", re.I)
+
+
+def _without_dates(text: str) -> str:
+    """«Оплатить интернет 26 числа» → «Оплатить интернет»: число в дате — не сумма."""
+    return DATE_NUM_RE.sub(" ", text or "")
 
 
 def _day_short(d: date) -> str:
@@ -97,6 +109,14 @@ class FinanceMixin:
     def _guard_finance(self, r: BrainResult, text: str) -> BrainResult:
         """«Купил хлеб за 100» — это расход, а не дело «Купить хлеб»."""
         from dataclasses import replace
+        # «Продлить БСК», «Оплатить интернет 26 числа» — это дело (что сделать), а не расход: суммы нет,
+        # глагол «что сделать?». Расход — когда уже потратил: «Продлил БСК за 1500».
+        if r.intent in ("CREATE_EXPENSE", "CREATE_INCOME") and parse_amount(_without_dates(text)) is None \
+                and TODO_RE.match(text):
+            title = re.sub(r"^\s*(?:надо|нужно|не\s+забыть|не\s+забудь)\s+", "", text, flags=re.I)
+            found = find_dates(title, self.today())
+            return replace(r, intent="CREATE_TASK", title=T.short(title.strip(" .!"), 100),
+                           due_date=found[0] if found else None)
         if r.intent == "CREATE_TASK" and PURCHASE_RE.search(text) and parse_amount(text):
             return replace(r, intent="CREATE_EXPENSE", amount_text=None, category=None, description=r.title)
         # «Зп 1000», «Пришла премия 5000» — это доход, а не расход.

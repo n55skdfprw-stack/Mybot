@@ -148,14 +148,12 @@ def test_pairs_have_numbers_and_blank_line_between(tmp_path):
     alfred.schedule.create({"type": "training", "date": "2026-09-25", "start_time": "18:00"}, alfred.now())
     alfred.schedule.create({"type": "training", "date": "2026-09-25", "start_time": "19:00"}, alfred.now())
     sync(access, alfred)
-    week = alfred.schedule_week_view().text
-    assert ("🗓️ Завтра, 25 сентября\n"
+    day = alfred.schedule_day_view(date(2026, 9, 25)).text
+    assert ("🎩 Ваш распорядок на завтра, Сэр!\n\n"
             "1-я пара · 09:45–11:15 — Лекция\n📚 Физическая реабилитация\n🚪 Ауд. 421\n"
             "💬 Преподаватель: Иванов И.И.\n\n"
-            "2-я пара · 11:30–13:00 — Практика\n") in week
-    assert "\n\n18:00 — Тренировка\n19:00 — Тренировка" in week     # свои короткие события — компактно
-    day = alfred.schedule_day_view(date(2026, 9, 25)).text                # экран «Завтра» — так же
-    assert "Иванов И.И.\n\n2-я пара · 11:30–13:00" in day
+            "2-я пара · 11:30–13:00 — Практика\n") in day
+    assert "\n\n18:00 — Тренировка\n19:00 — Тренировка" in day      # свои короткие события — компактно
 
 
 def test_pair_numbers_added_quietly_to_already_loaded_lessons(tmp_path):

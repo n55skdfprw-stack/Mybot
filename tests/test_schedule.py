@@ -326,7 +326,7 @@ def test_views_and_tomorrow_summary(tmp_path):
     r = a.handle_callback("sched:tomorrow")
     assert r.edit and "10:00–12:00 — Лекция\n📚 Спортивная физиология\n🚪 Аудитория 304" in r.text
     r = a.handle_callback("sched:week")
-    assert "🗓️ Завтра, 24 сентября" in r.text and "на этой неделе" in r.text
+    assert "на этой неделе" in r.text and day_buttons(r) == [("Чт, 24 сентября · 2", "sched:day:2026-09-24:week")]
     s = a.tomorrow_summary()
     assert s.text.startswith("🎩 Добрый вечер, Сэр!\n\nНапоминаю о завтрашнем расписании!")
     assert "🕙 10:00–12:00 — Лекция" in s.text and "🕕 18:00 — Тренировка (Ноги)" in s.text
@@ -388,24 +388,44 @@ def test_series_thursdays_with_extra_single_training(tmp_path):
     assert len(legs) == 1 and legs[0].recurrence_id is None
 
 
-def test_week_view_compact(tmp_path):
+def day_buttons(r):
+    """Кнопки дней в списке недели или месяца: (надпись, что нажимается)."""
+    return [(t, d) for row in r.buttons for t, d in row if d.startswith("sched:day:")]
+
+
+def test_week_is_short_list_of_days_and_day_opens_on_tap(tmp_path):
+    """Неделя — не простыня, а кнопки дней «Чт, 24 сентября · 2»; нажал — открылся день, «↩️ К неделе» — назад."""
     a, llm, _ = make(tmp_path)
     for when, t in (("завтра", "в 18:00"), ("завтра", "в 19:00")):
         llm.said(intent="CREATE_EVENT", event_type="training", event_when=when, time_text=t)
         run(a.handle_text("x"))
     r = a.handle_callback("sched:week")
-    assert "🗓️ Завтра, 24 сентября\n18:00 — Тренировка\n19:00 — Тренировка" in r.text
-    assert "📅" not in r.text and all("📅" not in b[0] for row in r.buttons for b in row)
+    assert "Тренировка" not in r.text and "Выберите день" in r.text
+    assert day_buttons(r) == [("Чт, 24 сентября · 2", "sched:day:2026-09-24:week")]
+    day = a.handle_callback("sched:day:2026-09-24:week")
+    assert day.edit and "18:00 — Тренировка\n19:00 — Тренировка" in day.text
+    assert day.buttons[0] == [("↩️ К неделе", "sched:week")]
+    assert a.handle_callback("sched:week").edit
+
+
+def test_month_shows_only_dates_and_today_is_marked(tmp_path):
+    a, llm, clock = make(tmp_path)
+    a.schedule.create({"type": "training", "date": "2026-09-23", "start_time": "18:00"}, clock())  # сегодня
+    a.schedule.create({"type": "training", "date": "2026-09-25", "start_time": "18:00"}, clock())
+    r = a.handle_callback("sched:month")
+    assert day_buttons(r) == [("📍23", "sched:day:2026-09-23:month"), ("25", "sched:day:2026-09-25:month")]
+    assert a.handle_callback("sched:day:2026-09-25:month").buttons[0] == [("↩️ К месяцу", "sched:month")]
+    assert "неактуальна" in a.handle_callback("sched:day:не-дата:month").text
 
 
 def test_week_is_until_sunday_and_month_until_month_end(tmp_path):
     a, llm, _ = make(tmp_path)
     _create_series(a, llm)  # пн и чт до конца октября
-    week = a.handle_callback("sched:week").text
-    assert "Завтра, 24 сентября" in week and "28 сентября" not in week  # неделя — до воскресенья 27-го
-    month = a.handle_callback("sched:month").text
-    assert "Понедельник, 28 сентября" in month and "октябр" not in month
-    buttons = [b[0] for row in a.handle_callback("sched:month").buttons for b in row]
+    week = [d for _t, d in day_buttons(a.handle_callback("sched:week"))]
+    assert week == ["sched:day:2026-09-24:week"]                       # неделя — до воскресенья 27-го
+    month = [d for _t, d in day_buttons(a.handle_callback("sched:month"))]
+    assert "sched:day:2026-09-28:month" in month and not any("2026-10" in d for d in month)
+    buttons = [b[0] for row in a.handle_callback("sched:month").buttons for b in row][-4:]
     assert buttons == ["🗓️ Сегодня", "🗓️ Завтра", "🗓️ На этой неделе", "🗓️ В этом месяце"]
 
 
@@ -433,9 +453,8 @@ def test_week_is_monday_to_sunday(tmp_path):
     a.schedule.create({"type": "training", "date": "2026-09-21", "start_time": "18:00"}, clock())  # прошедший пн
     a.schedule.create({"type": "training", "date": "2026-09-27", "start_time": "12:00"}, clock())  # вс
     a.schedule.create({"type": "training", "date": "2026-09-28", "start_time": "18:00"}, clock())  # следующий пн
-    week = a.handle_callback("sched:week").text
-    assert "Понедельник, 21 сентября" in week and "Воскресенье, 27 сентября" in week
-    assert "28 сентября" not in week
+    week = [t for t, _d in day_buttons(a.handle_callback("sched:week"))]
+    assert week == ["Пн, 21 сентября · 1", "Вс, 27 сентября · 1"]          # следующий пн 28-го — не эта неделя
 
 
 def test_month_is_whole_month(tmp_path):
@@ -443,8 +462,8 @@ def test_month_is_whole_month(tmp_path):
     a.schedule.create({"type": "training", "date": "2026-09-01", "start_time": "18:00"}, clock())  # прошло
     a.schedule.create({"type": "training", "date": "2026-09-30", "start_time": "18:00"}, clock())
     a.schedule.create({"type": "training", "date": "2026-10-01", "start_time": "18:00"}, clock())
-    month = a.handle_callback("sched:month").text
-    assert "1 сентября" in month and "30 сентября" in month and "октября" not in month
+    month = [t for t, _d in day_buttons(a.handle_callback("sched:month"))]
+    assert month == ["1", "30"]                                           # 1 октября — уже другой месяц
 
 
 def test_comment_remove_picks_event_with_that_comment(tmp_path):

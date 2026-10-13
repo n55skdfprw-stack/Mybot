@@ -27,10 +27,12 @@ UNTIL_RE = re.compile(
 )
 REPEAT_WORDS = re.compile(r"кажд|\bпо\s+\w+(ам|ям)\b|будн|выходн|ежедн|еженед|ежемес", re.IGNORECASE)
 TYPE_WORDS = [("reminder", r"напомина"), ("training", r"тренир"), ("lecture", r"лекци"), ("practice", r"практик|семинар|\bпар[аыу]\b"),
-              ("doctor", r"врач|стоматолог|терапевт|при[её]м|клиник|анализ"), ("meeting", r"встреч")]
+              ("doctor", r"врач|стоматолог|терапевт|при[её]м|клиник|анализ|\bлор\b|окулист|офтальмолог|"
+                         r"невролог|гинеколог|хирург|дерматолог|кардиолог|уролог|эндокринолог|травматолог|"
+                         r"ортопед|педиатр|психотерапевт|массаж|физиотерап"), ("meeting", r"встреч")]
 SCHEDULE_BUTTONS = [[("🗓️ Сегодня", "sched:today"), ("🗓️ Завтра", "sched:tomorrow")],
                     [("🗓️ На этой неделе", "sched:week"), ("🗓️ В этом месяце", "sched:month")]]
-TELEGRAM_LIMIT = 3800
+BACK_LABEL = {"week": "↩️ К неделе", "month": "↩️ К месяцу"}
 
 
 VERB_RE = re.compile(r"взять|захватить|принести|оплатить|подготовить|распечатать|сдать", re.IGNORECASE)
@@ -71,51 +73,53 @@ class ScheduleMixin:
     schedule: ScheduleService
 
     # ------------------------------------------------------------ просмотр
-    def schedule_day_view(self, d: date, edit: bool = False) -> Reply:
+    def schedule_day_view(self, d: date, edit: bool = False, back: Optional[str] = None) -> Reply:
+        """Один день. back — откуда пришли: «week» / «month» — добавляем кнопку «↩️ Назад» к списку дней."""
         today = self.today()
         events = self.schedule.day(d)
         delta = (d - today).days
         when = {0: "на сегодня", 1: "на завтра"}.get(delta, f"на {S.day_title(d, today).lower()}")
+        buttons = ([[(BACK_LABEL[back], f"sched:{back}")]] if back in BACK_LABEL else []) + SCHEDULE_BUTTONS
         if not events:
-            return Reply(f"🎩 {when.capitalize()} в распорядке ничего нет, Сэр!", buttons=SCHEDULE_BUTTONS, edit=edit)
-        return Reply(f"🎩 Ваш распорядок {when}, Сэр!\n\n{S.blocks(events)}", buttons=SCHEDULE_BUTTONS, edit=edit)
+            return Reply(f"🎩 {when.capitalize()} в распорядке ничего нет, Сэр!", buttons=buttons, edit=edit)
+        return Reply(f"🎩 Ваш распорядок {when}, Сэр!\n\n{S.blocks(events)}", buttons=buttons, edit=edit)
 
-    def _period_view(self, start: date, end: date, title: str, empty: str, edit: bool) -> Reply:
-        today = self.today()
+    def _days_menu(self, start: date, end: date, title: str, empty: str, edit: bool, kind: str) -> Reply:
+        """Неделя или месяц — не длинным списком, а кнопками дней: нажали — открылся этот день.
+        Неделя: «Вт, 13 октября · 4» (4 — сколько событий); месяц: только числа «13»."""
         events = self.schedule.between(start, end)
         if not events:
             return Reply(empty, buttons=SCHEDULE_BUTTONS, edit=edit)
-        by_day: dict[date, list] = {}
+        counts: dict[date, int] = {}
         for e in events:
-            by_day.setdefault(e.date, []).append(e)
-        text = f"🎩 {title}\n\n"
-        shown = 0
-        for d, day_events in by_day.items():
-            day = f"🗓️ {S.day_title(d, today)}\n{S.blocks(day_events)}"
-            if len(text) + len(day) > TELEGRAM_LIMIT:
-                break
-            text += day + "\n\n"
-            shown += len(day_events)
-        hidden = len(events) - shown
-        if hidden > 0:
-            text += f"…и ещё событий: {hidden}!"
-        return Reply(text.rstrip(), buttons=SCHEDULE_BUTTONS, edit=edit)
+            counts[e.date] = counts.get(e.date, 0) + 1
+        today = self.today()
+        if kind == "week":
+            rows = [[(f"{'📍 ' if d == today else ''}{S.WEEKDAY_SHORT_CAP[d.weekday()]}, {d.day} "
+                      f"{T.MONTHS_GEN[d.month - 1]} · {n}", f"sched:day:{d.isoformat()}:week")]
+                    for d, n in sorted(counts.items())]
+        else:
+            days = [(f"📍{d.day}" if d == today else str(d.day), f"sched:day:{d.isoformat()}:month")
+                    for d in sorted(counts)]
+            rows = [days[i:i + 5] for i in range(0, len(days), 5)]
+        hint = "Выберите день — покажу, что в нём." + (" Число — сколько событий." if kind == "week" else "")
+        return Reply(f"🎩 {title}\n\n{hint}", buttons=rows + SCHEDULE_BUTTONS, edit=edit)
 
     def schedule_week_view(self, edit: bool = False) -> Reply:
-        """Вся текущая неделя: с понедельника по воскресенье."""
+        """Вся текущая неделя: с понедельника по воскресенье — кнопками дней."""
         today = self.today()
         monday = today - timedelta(days=today.weekday())
         sunday = monday + timedelta(days=6)
-        return self._period_view(monday, sunday, "Ваш распорядок на этой неделе, Сэр!",
-                                 "🎩 На этой неделе в распорядке ничего нет, Сэр!", edit)
+        return self._days_menu(monday, sunday, "Ваш распорядок на этой неделе, Сэр!",
+                               "🎩 На этой неделе в распорядке ничего нет, Сэр!", edit, "week")
 
     def schedule_month_view(self, edit: bool = False) -> Reply:
-        """Весь текущий месяц: с 1-го числа по последнее."""
+        """Весь текущий месяц: с 1-го числа по последнее — кнопками чисел."""
         today = self.today()
         first = today.replace(day=1)
         last = today.replace(day=calendar.monthrange(today.year, today.month)[1])
-        return self._period_view(first, last, "Ваш распорядок в этом месяце, Сэр!",
-                                 "🎩 В этом месяце в распорядке ничего нет, Сэр!", edit)
+        return self._days_menu(first, last, "Ваш распорядок в этом месяце, Сэр!",
+                               "🎩 В этом месяце в распорядке ничего нет, Сэр!", edit, "month")
 
     def _show_schedule(self, r: BrainResult) -> Reply:
         when = (r.event_when or "").casefold() + " " + (self._message or "").casefold()

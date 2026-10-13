@@ -2,7 +2,7 @@
 
 Понимает: сегодня, завтра, послезавтра, в/на пятницу, в следующую пятницу,
 на выходных, через 3 дня, через неделю, через 2 недели, через месяц,
-15 октября, 15-го октября, 01.10, 01.10.2026.
+15 октября, 15-го октября, 01.10, 01.10.2026, 20 числа, 26-го, на 15-е.
 """
 
 import calendar
@@ -45,6 +45,21 @@ def _future(y_candidate: date, today: date) -> date:
     return y_candidate if y_candidate >= today else y_candidate.replace(year=y_candidate.year + 1)
 
 
+def _day_of_month(n: int, today: date) -> Optional[date]:
+    """Ближайшее «N-е число» начиная с сегодня: 20-е 13 октября → 20 октября; 5-е 13 октября → 5 ноября.
+    Если в месяце такого числа нет (31-е в ноябре) — берём следующий месяц, где оно есть."""
+    if not 1 <= n <= 31:
+        return None
+    first = today.replace(day=1)
+    for k in range(13):
+        month = _add_months(first, k)
+        if n <= calendar.monthrange(month.year, month.month)[1]:
+            d = month.replace(day=n)
+            if d >= today:
+                return d
+    return None
+
+
 def find_dates(text: str, today: date) -> list[date]:
     """Все даты, которые удалось найти в тексте, в порядке появления."""
     t = _norm(text)
@@ -81,6 +96,11 @@ def find_dates(text: str, today: date) -> list[date]:
         except ValueError:
             continue
         add(m.start(), d if m.group(3) else _future(d, today))
+
+    # «20 числа», «26-го», «на 15-е», «к 26-му» — без месяца: ближайшее такое число (в этом или следующем месяце)
+    for m in re.finditer(r"\b(\d{1,2})(?:\s*-?\s*(?:го|е|му|ое|ого))?\s+числ[ао]\b"
+                         r"|\b(\d{1,2})\s*-\s*(?:го|е|му|ое|ого)\b(?!\s+" + _MONTH_RE + r")", t):
+        add(m.start(), _day_of_month(int(m.group(1) or m.group(2)), today))
 
     # 01.10, 01.10.2026, 1/10
     for m in re.finditer(r"\b(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?\b", t):

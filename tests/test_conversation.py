@@ -123,6 +123,73 @@ def test_money_period_monday_is_not_week():
     assert parse_period("в понедельник", today) is None
 
 
+# ---------------------------------------------------------------- живые случаи со скриншотов (13.10.2026)
+
+def test_dates_like_20th():
+    from alfred.brain.dates import find_dates
+    today = date(2026, 10, 13)
+    assert find_dates("20 числа на ремесленной", today) == [date(2026, 10, 20)]
+    assert find_dates("26 числа", today) == [date(2026, 10, 26)]
+    assert find_dates("5 числа", today) == [date(2026, 11, 5)]            # 5-е уже прошло — значит, ноябрь
+    assert find_dates("к 26-му", today) == [date(2026, 10, 26)]
+    assert find_dates("на 15-е", today) == [date(2026, 10, 15)]
+    assert find_dates("31 числа", date(2026, 11, 2)) == [date(2026, 12, 31)]  # в ноябре нет 31-го
+    assert find_dates("15-го октября", today) == [date(2026, 10, 15)]     # с месяцем — как раньше
+    assert find_dates("в 15", today) == []                                # время — не дата
+
+
+def test_ent_doctor_on_20th_asks_only_time(tmp_path):
+    """«20 числа на ремесленной Лор» → спросил время → «15» → записал на 20-е, без вопроса про день."""
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_EVENT", event_type="doctor", event_title="ЛОР", location="Ремесленная",
+             event_when="20 числа")
+    r = run(a.handle_text("20 числа на ремесленной Лор"))
+    assert "Во сколько" in r.text
+    llm.said(intent="ANSWER", answer="15")
+    r = run(a.handle_text("15"))
+    assert "Записал" in r.text and "На какой день" not in r.text
+    [e] = a.schedule.between(date(2026, 9, 1), date(2026, 12, 31))
+    assert (e.date, e.start_time, e.type) == (date(2026, 10, 20), "15:00", "doctor")  # сегодня 23.09 → 20 октября
+
+
+def test_ent_is_a_doctor():
+    from alfred.core.schedule import infer_type
+    assert infer_type("Лор на ремесленной") == "doctor" and infer_type("к окулисту") == "doctor"
+    assert infer_type("Лорд Байрон") is None
+
+
+def test_renew_card_is_a_task_not_expense(tmp_path):
+    """«Продлить БСК» — дело, а не расход (GigaChat ошибся — код поправляет)."""
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_EXPENSE", category="транспорт", description="Продлить БСК")
+    r = run(a.handle_text("Продлить БСК"))
+    assert "сумма" not in r.text.lower() and a.finance.latest() == []
+    assert [t.title for t in a.tasks.active()] == ["Продлить БСК"]
+    llm.said(intent="CREATE_EXPENSE", category="интернет")
+    run(a.handle_text("Оплатить интернет 26 числа"))
+    task = [t for t in a.tasks.active() if "интернет" in t.title][0]
+    assert task.due_date == date(2026, 9, 26)
+    llm.said(intent="CREATE_EXPENSE", amount_text="1500", category="транспорт")
+    run(a.handle_text("Продлил БСК за 1500"))                             # уже потратил — это расход
+    assert a.finance.latest()[0].amount == 1500
+
+
+def test_date_is_not_taken_as_amount(tmp_path):
+    """На «Какая сумма?» ответили «26 числа» — это не 26 ₽."""
+    a, llm, _ = make(tmp_path)
+    llm.said(intent="CREATE_EXPENSE", category="такси")
+    assert "сумма" in run(a.handle_text("Потратил на такси")).text.lower()
+    llm.said(intent="ANSWER", answer="26 числа")
+    llm.said(intent="UNKNOWN")
+    run(a.handle_text("26 числа"))
+    assert a.finance.latest() == []
+    llm.said(intent="CREATE_EXPENSE", category="такси")
+    run(a.handle_text("Потратил на такси"))
+    llm.said(intent="ANSWER", answer="120к")
+    run(a.handle_text("120к"))
+    assert a.finance.latest()[0].amount == 120000                          # «120к» — по-прежнему сумма
+
+
 # ---------------------------------------------------------------- 🧮 счётчик токенов
 
 def test_token_meter_and_system_view(tmp_path):
